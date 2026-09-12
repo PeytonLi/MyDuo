@@ -95,5 +95,9 @@ export async function createRecallBot(sessionId: string, meetingUrl: string, tra
 }
 
 export async function removeRecallBot(botId: string) {
-  await recallRequest(`/bot/${encodeURIComponent(botId)}/`, { method: "DELETE" });
+  // DELETE /bot/{id}/ only works for scheduled bots; a bot that has joined must leave the call instead.
+  await recallRequest(`/bot/${encodeURIComponent(botId)}/leave_call/`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
 }
