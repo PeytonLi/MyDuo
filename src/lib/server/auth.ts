@@ -56,17 +56,20 @@ export async function createOperatorSession() {
   return { token, expiresAt };
 }
 
-export async function requireOperator(_request?: Request) {
-  void _request;
-  const token = (await cookies()).get(COOKIE_NAME)?.value;
+export async function requireOperator(request?: Request, scopedSessionId?: string) {
+  const authorization = request?.headers.get("authorization");
+  const addonToken = scopedSessionId ? authorization?.match(/^Bearer ([A-Za-z0-9_-]{20,200})$/)?.[1] : undefined;
+  const cookieToken = addonToken ? undefined : (await cookies()).get(COOKIE_NAME)?.value;
+  const token = cookieToken || addonToken;
   if (!token) throw new AuthError("Sign in required");
   const ownerId = await readQuery(async (tx) => {
     const result = await tx.run(
-      `MATCH (s:AccessSession {tokenHash: $tokenHash, kind: 'operator'})
+      `MATCH (s:AccessSession {tokenHash: $tokenHash, kind: $kind})
        WHERE s.expiresAt > datetime()
+         AND ($scopedSessionId IS NULL OR s.scopedSessionId = $scopedSessionId)
        WITH s LIMIT 1
        RETURN s.ownerId AS ownerId`,
-      { tokenHash: tokenHash(token) },
+      { tokenHash: tokenHash(token), kind: cookieToken ? "operator" : "addon", scopedSessionId: cookieToken ? null : scopedSessionId },
     );
     return result.records[0]?.get("ownerId") as string | undefined;
   });

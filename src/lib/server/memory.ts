@@ -5,6 +5,7 @@ import neo4j, { type ManagedTransaction, type Record as Neo4jRecord } from "neo4
 import { z } from "zod";
 import type { AssistanceRequest, Evidence } from "@/lib/contracts";
 import { readQuery, writeQuery } from "./db";
+import { allowedVoice, elevenLabsVoices } from "./env";
 
 const factKindSchema = z.enum(["decision", "dependency", "deadline", "responsibility", "note"]);
 
@@ -13,6 +14,7 @@ export const profileInputSchema = z.object({
   priorities: z.string().trim().max(2_000),
   tone: z.string().trim().max(500),
   responseExamples: z.string().trim().max(4_000),
+  selectedVoiceId: z.string().refine((id) => Boolean(allowedVoice(id)), "Choose an available voice"),
 });
 
 const projectInputSchema = z.object({
@@ -65,14 +67,16 @@ const string = (record: Neo4jRecord, key: string) => String(record.get(key) ?? "
 const number = (value: unknown) => (neo4j.isInt(value) ? value.toNumber() : Number(value));
 
 export async function getProfile(ownerId: string): Promise<Profile> {
+  const defaultVoiceId = elevenLabsVoices()[0].id;
   return readQuery(async (tx) => {
     const result = await tx.run(
       `OPTIONAL MATCH (u:User {id: $ownerId})
        RETURN coalesce(u.role, '') AS role,
               coalesce(u.priorities, '') AS priorities,
               coalesce(u.tone, '') AS tone,
-              coalesce(u.responseExamples, '') AS responseExamples`,
-      { ownerId },
+              coalesce(u.responseExamples, '') AS responseExamples,
+              coalesce(u.selectedVoiceId, $defaultVoiceId) AS selectedVoiceId`,
+      { ownerId, defaultVoiceId },
     );
     const record = result.records[0];
     return {
@@ -80,20 +84,23 @@ export async function getProfile(ownerId: string): Promise<Profile> {
       priorities: string(record, "priorities"),
       tone: string(record, "tone"),
       responseExamples: string(record, "responseExamples"),
+      selectedVoiceId: allowedVoice(string(record, "selectedVoiceId"))?.id ?? defaultVoiceId,
     };
   });
 }
 
 export async function updateProfile(ownerId: string, profile: Profile): Promise<Profile> {
+  profile = profileInputSchema.parse(profile);
   return writeQuery(async (tx) => {
     const result = await tx.run(
       `MERGE (u:User {id: $ownerId})
        SET u.role = $role,
            u.priorities = $priorities,
            u.tone = $tone,
-           u.responseExamples = $responseExamples
+           u.responseExamples = $responseExamples,
+           u.selectedVoiceId = $selectedVoiceId
        RETURN u.role AS role, u.priorities AS priorities, u.tone AS tone,
-              u.responseExamples AS responseExamples`,
+              u.responseExamples AS responseExamples, u.selectedVoiceId AS selectedVoiceId`,
       { ownerId, ...profile },
     );
     const record = result.records[0];
@@ -102,6 +109,7 @@ export async function updateProfile(ownerId: string, profile: Profile): Promise<
       priorities: string(record, "priorities"),
       tone: string(record, "tone"),
       responseExamples: string(record, "responseExamples"),
+      selectedVoiceId: string(record, "selectedVoiceId"),
     };
   });
 }
@@ -336,7 +344,7 @@ export async function deleteMemory(ownerId: string, input: DeleteMemoryInput) {
 
 export type SuggestionContext = {
   projectName: string;
-  profile: Profile;
+  profile: Omit<Profile, "selectedVoiceId">;
   transcriptRevision: number;
   evidence: Evidence[];
   selectedUtteranceIds: string[];

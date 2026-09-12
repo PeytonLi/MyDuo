@@ -27,12 +27,27 @@ export const suggestionDraftSchema = z.object({
   sessionId: idSchema,
   version: z.number().int().positive(),
   mode: z.enum(["answer", "support", "clarify"]),
+  trigger: z.enum(["manual", "auto"]).default("manual"),
   text: z.string().min(1).max(600),
   evidence: z.array(evidenceSchema),
   basis: z.enum(["notes", "meeting", "mixed", "needs_context"]),
   transcriptRevision: z.number().int().nonnegative(),
   createdAt: z.string(),
 });
+
+export const autoSuggestionStateSchema = z.object({
+  enabled: z.boolean(),
+  lastRevision: z.number().int().nonnegative(),
+  mutedUntilRevision: z.number().int().nonnegative(),
+});
+
+export const autoSuggestionRequestSchema = z.object({
+  transcriptRevision: z.number().int().positive(),
+}).strict();
+
+export const autoSuggestionSettingSchema = z.object({
+  enabled: z.boolean(),
+}).strict();
 
 export const speechStateSchema = z.object({
   id: idSchema,
@@ -77,6 +92,7 @@ export const apiErrorSchema = z.object({
 export const sessionStateSchema = z.object({
   id: idSchema,
   projectId: idSchema,
+  meetingPlatform: z.enum(["google_meet", "zoom"]),
   status: z.enum(["joining", "waiting", "listening", "ending", "ended", "failed", "uncertain"]),
   transcriptRevision: z.number().int().nonnegative(),
   stopRevision: z.number().int().nonnegative(),
@@ -89,6 +105,7 @@ export const sessionStateSchema = z.object({
 export type TranscriptTurn = z.infer<typeof transcriptTurnSchema>;
 export type Evidence = z.infer<typeof evidenceSchema>;
 export type SuggestionDraft = z.infer<typeof suggestionDraftSchema>;
+export type AutoSuggestionState = z.infer<typeof autoSuggestionStateSchema>;
 export type SpeechState = z.infer<typeof speechStateSchema>;
 export type AssistanceRequest = z.infer<typeof assistanceRequestSchema>;
 export type ApprovalRequest = z.infer<typeof approvalRequestSchema>;

@@ -31,8 +31,8 @@ services:
         sync: false
       - key: ELEVENLABS_API_KEY
         sync: false
-      - key: ELEVENLABS_VOICE_ID
-        sync: false
+      - key: ELEVENLABS_VOICES
+        value: '[{"id":"EXAVITQu4vr4xnSDxMaL","name":"Sarah · Confident"},{"id":"JBFqnCBsd6RMkjVDRZzb","name":"George · Warm"},{"id":"SAz9YHcvj6GT2YYXdXww","name":"River · Neutral"}]'
       - key: ELEVENLABS_TTS_MODEL
         value: eleven_flash_v2_5
       - key: DEEPSEEK_API_KEY
@@ -43,3 +43,5 @@ services:
         value: deepseek-flash
       - key: DEMO_MODE
         value: "false"
+      - key: GOOGLE_MEET_ADDON_CLOUD_PROJECT_NUMBER
+        sync: false

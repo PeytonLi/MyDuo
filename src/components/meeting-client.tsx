@@ -1,7 +1,8 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import type { AssistanceRequest, SessionState, SuggestionDraft } from "@/lib/contracts";
+import Link from "next/link";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { AssistanceRequest, AutoSuggestionState, SessionState, SuggestionDraft } from "@/lib/contracts";
 import { Wordmark } from "./wordmark";
 
 type Mode = AssistanceRequest["mode"];
@@ -31,7 +32,12 @@ export function MeetingClient({ sessionId }: { sessionId: string }) {
   const [question, setQuestion] = useState("");
   const [draftEdit, setDraftEdit] = useState<{ suggestionId: string; text: string } | null>(null);
   const [busy, setBusy] = useState<"suggest" | "save" | "speak" | "stop" | "end" | null>(null);
+  const [autoState, setAutoState] = useState<AutoSuggestionState | null>(null);
+  const [autoBusy, setAutoBusy] = useState(false);
+  const [pairing, setPairing] = useState<{ code: string; expiresAt: string } | null>(null);
+  const [pairingBusy, setPairingBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const autoAttemptedRevision = useRef(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -57,11 +63,43 @@ export function MeetingClient({ sessionId }: { sessionId: string }) {
     };
   }, [refresh]);
 
+  useEffect(() => {
+    void api<AutoSuggestionState>(`/api/sessions/${sessionId}/auto-suggestions`)
+      .then((state) => {
+        autoAttemptedRevision.current = state.lastRevision;
+        setAutoState(state);
+      })
+      .catch((error) => setMessage(error instanceof Error ? error.message : "Could not load automatic suggestions."));
+  }, [sessionId]);
+
   const suggestion = session?.currentSuggestion;
   const draft = draftEdit && draftEdit.suggestionId === suggestion?.id ? draftEdit.text : suggestion?.text ?? "";
   const isStale = Boolean(suggestion && session && suggestion.transcriptRevision < session.transcriptRevision);
   const canSpeak = Boolean(suggestion && session?.mediaReady && draft.trim() && !session.activeSpeech && !isStale);
   const transcript = useMemo(() => session?.recentUtterances ?? [], [session]);
+
+  useEffect(() => {
+    const revision = session?.transcriptRevision ?? 0;
+    if (!autoState?.enabled || session?.status !== "listening" || revision <= autoAttemptedRevision.current
+      || suggestion || session.activeSpeech || draftEdit || busy || autoBusy) return;
+    const timer = window.setTimeout(() => {
+      autoAttemptedRevision.current = revision;
+      setAutoBusy(true);
+      void api<{ suggestion: SuggestionDraft | null }>(`/api/sessions/${sessionId}/auto-suggestions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ transcriptRevision: revision }),
+      }).then(({ suggestion: automatic }) => {
+        if (!automatic) return;
+        setSession((current) => current && !current.currentSuggestion && current.transcriptRevision === automatic.transcriptRevision
+          ? { ...current, currentSuggestion: automatic }
+          : current);
+      }).catch((error) => {
+        setMessage(error instanceof Error ? error.message : "Could not create an automatic question.");
+      }).finally(() => setAutoBusy(false));
+    }, 2_500);
+    return () => window.clearTimeout(timer);
+  }, [autoBusy, autoState?.enabled, busy, draftEdit, session?.activeSpeech, session?.status, session?.transcriptRevision, sessionId, suggestion]);
 
   function toggleUtterance(id: string) {
     setSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current.slice(-9), id]);
@@ -84,6 +122,39 @@ export function MeetingClient({ sessionId }: { sessionId: string }) {
       setMessage(error instanceof Error ? error.message : "Could not create a suggestion.");
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function toggleAutoSuggestions() {
+    if (!autoState) return;
+    setAutoBusy(true);
+    try {
+      const next = await api<AutoSuggestionState>(`/api/sessions/${sessionId}/auto-suggestions`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enabled: !autoState.enabled }),
+      });
+      setAutoState(next);
+      setMessage(next.enabled ? "Automatic private questions are on." : "Automatic questions paused for this meeting.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not update automatic suggestions.");
+    } finally {
+      setAutoBusy(false);
+    }
+  }
+
+  async function createPairingCode() {
+    setPairingBusy(true);
+    try {
+      setPairing(await api<{ code: string; expiresAt: string }>("/api/addon/pair", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      }));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not create a side-panel code.");
+    } finally {
+      setPairingBusy(false);
     }
   }
 
@@ -170,11 +241,12 @@ export function MeetingClient({ sessionId }: { sessionId: string }) {
     <main className="meeting-shell">
       <header className="meeting-topbar">
         <Wordmark compact />
-        <div className={`status status-${session.status}`}><i /> <span>{session.status}</span>{session.status === "waiting" && <small>Host may need to admit MyDuo</small>}</div>
+        <div className={`status status-${session.status}`}><i /> <span>{session.status}</span>{session.status === "waiting" && <small>{session.meetingPlatform === "zoom" ? "MyDuo is in the Zoom waiting room" : "Host may need to admit MyDuo"}</small>}</div>
         <button className="text-button danger" onClick={endSession} disabled={busy === "end" || ["ending", "ended"].includes(session.status)}>{session.status === "ending" ? "Leaving…" : "End session"}</button>
       </header>
 
       {message && <div className="meeting-notice" role="status">{message}</div>}
+      {session.status === "ended" && <div className="meeting-notice"><Link className="button button-accent" href={`/meeting/${sessionId}/review`}>Review meeting memory</Link></div>}
 
       <div className="meeting-grid">
         <section className="transcript-panel" aria-labelledby="transcript-heading">
@@ -193,17 +265,29 @@ export function MeetingClient({ sessionId }: { sessionId: string }) {
         <section className="copilot-panel" aria-labelledby="copilot-heading">
           <div className="meeting-section-head"><div><p className="section-kicker">Private to you</p><h2 id="copilot-heading">Your next contribution</h2></div><span className="privacy-dot" title="Private operator view" /></div>
 
+          <div className="selection-hint">
+            <button type="button" className="text-button" aria-pressed={autoState?.enabled ?? false} onClick={toggleAutoSuggestions} disabled={!autoState || autoBusy}>
+              {autoState?.enabled ? "Pause automatic questions" : "Auto-suggest questions"}
+            </button>
+            {autoBusy && <span role="status"> Thinking quietly…</span>}
+            <span> · </span>
+            <button type="button" className="text-button" onClick={createPairingCode} disabled={pairingBusy}>
+              {pairingBusy ? "Creating code…" : "Meet side panel"}
+            </button>
+            {pairing && <p role="status">Enter <strong>{pairing.code}</strong> in the Meet side panel before {new Date(pairing.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.</p>}
+          </div>
+
           <form className="assist-form" onSubmit={generate}>
             <div className="mode-switcher" aria-label="Assistance mode">
               {(Object.keys(modeCopy) as Mode[]).map((item) => <button type="button" key={item} className={mode === item ? "active" : ""} onClick={() => setMode(item)}>{modeCopy[item].label}</button>)}
             </div>
             <label htmlFor="question">{modeCopy[mode].prompt}</label>
-            <div className="prompt-row"><input id="question" value={question} onChange={(event) => setQuestion(event.target.value)} maxLength={500} placeholder={selected.length ? `${selected.length} transcript line${selected.length === 1 ? "" : "s"} selected` : "Use the latest conversation"} /><button className="button button-ink" disabled={busy === "suggest" || session.status !== "listening"}>{busy === "suggest" ? "Thinking…" : "Draft"}</button></div>
+            <div className="prompt-row"><input id="question" value={question} onChange={(event) => setQuestion(event.target.value)} maxLength={500} placeholder={selected.length ? `${selected.length} transcript line${selected.length === 1 ? "" : "s"} selected` : "Use the latest conversation"} /><button className="button button-ink" disabled={busy === "suggest" || autoBusy || session.status !== "listening"}>{busy === "suggest" ? "Thinking…" : "Draft"}</button></div>
           </form>
 
           {suggestion ? (
             <article className="suggestion-card">
-              <div className="suggestion-meta"><span>{suggestion.mode}</span><time>{new Date(suggestion.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</time></div>
+              <div className="suggestion-meta"><span>{suggestion.trigger === "auto" ? "Automatic question" : suggestion.mode}</span><time>{new Date(suggestion.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</time></div>
               <label htmlFor="draft">Suggested words</label>
               <textarea id="draft" className="draft-text" value={draft} onChange={(event) => setDraftEdit({ suggestionId: suggestion.id, text: event.target.value })} maxLength={600} rows={6} />
               <div className="character-count">{draft.length}/600</div>

@@ -2,6 +2,10 @@
 
 Prepared: 2026-09-12. This plan starts from the tested MVP at commit `a89ef64`.
 
+## Progress — 2026-09-12
+
+Phases 1, 2, 3, and 5 are code-complete with regression coverage in `pnpm check:all` (11 unit, 5 integration, 14 desktop/mobile browser tests, build, audit; provider smoke tests pass separately). Phase 4's prototype is code-complete — pairing codes, scoped add-on tokens, CSP, and the `/meet-addon` panel — pending the Google Cloud test deployment. Phase 0 and every live-meeting gate remain open until the Render deploy exists. See [QA results](QA-RESULTS.md) for the coverage detail.
+
 ## Goal and order
 
 Build the features that make the demo feel proactive and useful without weakening the rule that only the operator can approve speech.

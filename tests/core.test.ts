@@ -3,10 +3,11 @@ import { createHash, createHmac } from "node:crypto";
 import test from "node:test";
 import { assistanceRequestSchema, approvalRequestSchema } from "../src/lib/contracts";
 import { assertMutationOrigin, AuthError, consumeLoginAttempt, resetLoginAttempts } from "../src/lib/server/auth";
+import { parsePairingCode } from "../src/lib/server/addon";
 import { normalizeMeetingUrl, parseStatusEvent } from "../src/lib/server/meetings";
 import { boundEvidence } from "../src/lib/server/memory";
 import { verifyRecallWebhook } from "../src/lib/server/recall";
-import { mediaTokenFrom, parseAcknowledgement } from "../src/lib/server/speech";
+import { consumeVoicePreview, mediaTokenFrom, parseAcknowledgement } from "../src/lib/server/speech";
 import { parseModelSuggestion } from "../src/lib/server/suggestions";
 import { normalizeTranscriptEvent, parseTranscriptEvent } from "../src/lib/server/transcripts";
 
@@ -19,11 +20,24 @@ test("request contracts enforce limits and identifiers", () => {
   assert.throws(() => parseAcknowledgement({ commandId: id, status: "cancelled" }));
 });
 
-test("Google Meet URLs are canonical and restricted", () => {
+test("meeting URLs are canonical and restricted", () => {
   assert.equal(normalizeMeetingUrl("https://meet.google.com/abc-defg-hij?authuser=1"), "https://meet.google.com/abc-defg-hij");
-  for (const value of ["http://meet.google.com/abc-defg-hij", "https://evil.example/abc-defg-hij", "https://meet.google.com/not-a-code/extra"]) {
+  assert.equal(normalizeMeetingUrl("https://us02web.zoom.us/j/12345678901?pwd=a+b&tracking=no"), "https://us02web.zoom.us/j/12345678901?pwd=a%20b");
+  for (const value of [
+    "http://meet.google.com/abc-defg-hij",
+    "https://evil.example/abc-defg-hij",
+    "https://meet.google.com/not-a-code/extra",
+    "https://zoom.us.evil.example/j/123456789",
+    "https://zoom.us/j/123",
+  ]) {
     assert.throws(() => normalizeMeetingUrl(value));
   }
+});
+
+test("Meet add-on pairing codes are normalized and constrained", () => {
+  assert.equal(parsePairingCode({ code: " a1b2c3d4e5 " }).code, "A1B2C3D4E5");
+  assert.throws(() => parsePairingCode({ code: "A1B2C3D4" }));
+  assert.throws(() => parsePairingCode({ code: "A1B2C3D4EZ" }));
 });
 
 test("Recall transcript parsing normalizes words and timing", () => {
@@ -120,6 +134,13 @@ test("a successful login can clear accumulated failures", () => {
   for (let attempt = 0; attempt < 5; attempt += 1) assert.equal(consumeLoginAttempt(key, 2_000), true);
   assert.equal(consumeLoginAttempt(key, 2_000), false);
   resetLoginAttempts(key);
+});
+
+test("voice previews are rate limited per operator", () => {
+  const ownerId = `preview-${Date.now()}`;
+  for (let request = 0; request < 5; request += 1) assert.equal(consumeVoicePreview(ownerId, 1_000), true);
+  assert.equal(consumeVoicePreview(ownerId, 1_000), false);
+  assert.equal(consumeVoicePreview(ownerId, 61_001), true);
 });
 
 test("Recall status payloads require the provider envelope", () => {

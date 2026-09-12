@@ -10,8 +10,8 @@ export const runtime = "nodejs";
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     assertMutationOrigin(request);
-    const { ownerId } = await requireOperator(request);
     const sessionId = idSchema.parse((await params).id);
+    const { ownerId } = await requireOperator(request, sessionId);
     return Response.json(await generateSuggestion(ownerId, sessionId, await request.json()), { status: 201 });
   } catch (error) {
     const status = error instanceof AuthError ? 401 : error instanceof ZodError || error instanceof SyntaxError || error instanceof MemoryInputError ? 400 : error instanceof SuggestionGenerationError ? 502 : 500;

@@ -15,9 +15,9 @@ export async function GET(request: Request, { params }: Context) {
     const parsed = await params;
     sessionId = z.string().uuid().parse(parsed.sessionId);
     commandId = z.string().uuid().parse(parsed.commandId);
-    const approvedText = await prepareApprovedAudio(mediaTokenFrom(request), sessionId, commandId);
+    const approved = await prepareApprovedAudio(mediaTokenFrom(request), sessionId, commandId);
     authorized = true;
-    const audio = await synthesizeApprovedText(approvedText);
+    const audio = await synthesizeApprovedText(approved.text, approved.voiceId);
     return new Response(audio, {
       headers: {
         "Content-Type": "audio/mpeg",

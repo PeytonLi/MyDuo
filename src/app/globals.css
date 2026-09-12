@@ -109,6 +109,12 @@ textarea { line-height: 1.55; resize: vertical; }
 .saved-notes { border-top: 1px solid var(--line); margin-top: 30px; padding-top: 22px; }
 .saved-note { align-items: center; border-bottom: 1px solid var(--paper-deep); display: flex; justify-content: space-between; padding: 10px 0; }
 .saved-note small { color: var(--ink-soft); }
+.voice-picker { border: 0; border-top: 1px solid var(--line); margin: 28px 0 0; padding: 22px 0 0; }
+.voice-picker legend { font-size: .78rem; font-weight: 750; letter-spacing: .04em; padding: 0 10px 0 0; }
+.voice-option { align-items: center; border-bottom: 1px solid var(--paper-deep); display: grid; gap: 12px; grid-template-columns: 1fr auto; min-height: 52px; padding: 6px 0; }
+.voice-option label { align-items: center; display: flex; gap: 10px; margin: 0; }
+.voice-option input { flex: 0 0 auto; width: 17px; }
+.voice-option audio { grid-column: 1 / -1; width: 100%; }
 .launch-panel { background: var(--ink); color: var(--cream); grid-column: 1 / -1; }
 .launch-copy { display: flex; gap: 20px; }
 .launch-copy h2 { font-size: 2.5rem; }

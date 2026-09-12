@@ -68,14 +68,23 @@ export function normalizeMeetingUrl(input: string) {
   try {
     url = new URL(input);
   } catch {
-    throw new MeetingError("Enter a valid Google Meet link", "INVALID_MEETING_URL");
+    throw new MeetingError("Enter a valid Google Meet or Zoom link", "INVALID_MEETING_URL");
   }
-  const code = url.pathname.replace(/^\/+|\/+$/g, "");
-  if (url.protocol !== "https:" || url.hostname !== "meet.google.com" || !/^[a-z]{3}-[a-z]{4}-[a-z]{3}$/.test(code)) {
-    throw new MeetingError("Enter a standard https://meet.google.com/xxx-xxxx-xxx link", "INVALID_MEETING_URL");
+  if (url.protocol !== "https:") {
+    throw new MeetingError("Enter a valid Google Meet or Zoom link", "INVALID_MEETING_URL");
   }
-  return `https://meet.google.com/${code}`;
+  const path = url.pathname.replace(/^\/+|\/+$/g, "");
+  if (url.hostname === "meet.google.com" && /^[a-z]{3}-[a-z]{4}-[a-z]{3}$/.test(path)) {
+    return `https://meet.google.com/${path}`;
+  }
+  if ((url.hostname === "zoom.us" || url.hostname.endsWith(".zoom.us")) && /^j\/\d{9,11}$/.test(path)) {
+    const password = url.searchParams.get("pwd");
+    return `https://${url.hostname}/${path}${password ? `?pwd=${encodeURIComponent(password)}` : ""}`;
+  }
+  throw new MeetingError("Enter a standard Google Meet or Zoom meeting link", "INVALID_MEETING_URL");
 }
+
+const meetingPlatform = (meetingUrl: string) => new URL(meetingUrl).hostname === "meet.google.com" ? "google_meet" : "zoom";
 
 function mapSpeech(properties: Record<string, unknown> | undefined): SpeechState | null {
   if (!properties) return null;
@@ -131,6 +140,7 @@ export async function getSessionState(ownerId: string, sessionId: string): Promi
           sessionId: suggestionProps.sessionId,
           version: asNumber(suggestionProps.version),
           mode: suggestionProps.mode,
+          trigger: suggestionProps.trigger ?? "manual",
           text: suggestionProps.text,
           evidence: JSON.parse(String(suggestionProps.evidenceJson || "[]")),
           basis: suggestionProps.basis,
@@ -154,6 +164,7 @@ export async function getSessionState(ownerId: string, sessionId: string): Promi
     return sessionStateSchema.parse({
       id: session.id,
       projectId: session.projectId,
+      meetingPlatform: session.meetingPlatform === "zoom" ? "zoom" : "google_meet",
       status: session.status,
       transcriptRevision: asNumber(session.transcriptRevision),
       stopRevision: asNumber(session.stopRevision),
@@ -207,6 +218,7 @@ async function reserveSession(ownerId: string, meetingUrl: string, requestedProj
       `MATCH (p:Project {id: $projectId, ownerId: $ownerId})
        CREATE (s:Session {
          id: $sessionId, ownerId: $ownerId, projectId: p.id, meetingUrl: $meetingUrl,
+         meetingPlatform: $meetingPlatform,
          status: 'joining', transcriptRevision: 0, stopRevision: 0,
          createdAt: $now, updatedAt: $now
        })
@@ -221,6 +233,7 @@ async function reserveSession(ownerId: string, meetingUrl: string, requestedProj
         projectId: String(selectedProjectId),
         sessionId,
         meetingUrl,
+        meetingPlatform: meetingPlatform(meetingUrl),
         tokenHash: tokenHash(bootstrapToken),
         expiresAt,
         now,

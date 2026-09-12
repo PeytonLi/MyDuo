@@ -20,6 +20,7 @@ const constraints = [
   ["session_id", "Session", "id"],
   ["utterance_id", "Utterance", "id"],
   ["suggestion_id", "Suggestion", "id"],
+  ["review_candidate_id", "ReviewCandidate", "id"],
   ["speech_command_id", "SpeechCommand", "id"],
   ["access_session_token", "AccessSession", "tokenHash"],
   ["recall_delivery_id", "RecallDelivery", "id"],

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
+import { createAddonPair, exchangeAddonPair } from "../src/lib/server/addon";
+import { AuthError, requireOperator } from "../src/lib/server/auth";
 import { getDriver, readQuery, writeQuery } from "../src/lib/server/db";
+import { elevenLabsVoices } from "../src/lib/server/env";
 import { applyRecallStatus, createMeeting, getSessionState, MeetingError } from "../src/lib/server/meetings";
 import { createMemory, deleteMemory, getProfile, getSuggestionContext, listMemory, updateProfile } from "../src/lib/server/memory";
 import {
@@ -13,6 +16,7 @@ import {
   queueSpeech,
   stopSpeech,
 } from "../src/lib/server/speech";
+import { dismissSuggestion, reserveSuggestion, setAutoSuggestionEnabled } from "../src/lib/server/suggestions";
 import { ingestTranscript, parseTranscriptEvent } from "../src/lib/server/transcripts";
 
 test("Neo4j regression: memory, webhooks, media authority, and speech state", { timeout: 60_000 }, async () => {
@@ -24,9 +28,11 @@ test("Neo4j regression: memory, webhooks, media authority, and speech state", { 
   const transcriptDeliveryId = `qa-transcript-${runId}`;
 
   try {
-    const profile = { role: "QA lead", priorities: "Correct state", tone: "Direct", responseExamples: "Show the evidence." };
+    const [firstVoice, secondVoice] = elevenLabsVoices();
+    const profile = { role: "QA lead", priorities: "Correct state", tone: "Direct", responseExamples: "Show the evidence.", selectedVoiceId: firstVoice.id };
     assert.deepEqual(await updateProfile(ownerId, profile), profile);
     assert.deepEqual(await getProfile(ownerId), profile);
+    await assert.rejects(() => updateProfile(ownerId, { ...profile, selectedVoiceId: "not-an-allowed-voice" }));
 
     const project = await createMemory(ownerId, { kind: "project", name: `Regression ${runId}` });
     const publicSource = await createMemory(ownerId, {
@@ -120,6 +126,18 @@ test("Neo4j regression: memory, webhooks, media authority, and speech state", { 
     assert.equal(state.transcriptRevision, 1);
     assert.equal(state.recentUtterances.length, 1);
     assert.equal(state.recentUtterances[0].text, "Can we launch?");
+    assert.equal(state.meetingPlatform, "google_meet", "sessions without a stored platform default to Google Meet copy");
+    await writeQuery(async (tx) => {
+      await tx.run("MATCH (s:Session {id: $sessionId}) SET s.meetingPlatform = 'zoom'", { sessionId });
+    });
+    assert.equal((await getSessionState(ownerId, sessionId)).meetingPlatform, "zoom");
+
+    const pairing = await createAddonPair(ownerId, sessionId);
+    const addon = await exchangeAddonPair(pairing.code);
+    const addonRequest = new Request("https://myduo.example/api", { headers: { authorization: `Bearer ${addon.token}` } });
+    assert.deepEqual(await requireOperator(addonRequest, sessionId), { ownerId });
+    await assert.rejects(() => requireOperator(addonRequest, randomUUID()), AuthError);
+    await assert.rejects(() => exchangeAddonPair(pairing.code));
 
     const context = await getSuggestionContext(ownerId, sessionId, {
       mode: "answer",
@@ -193,12 +211,13 @@ test("Neo4j regression: memory, webhooks, media authority, and speech state", { 
     const queued = await queueSpeech(ownerId, sessionId, approval);
     assert.equal(queued.status, "queued");
     assert.equal((await queueSpeech(ownerId, sessionId, approval)).id, queued.id);
+    await updateProfile(ownerId, { ...profile, selectedVoiceId: secondVoice.id });
 
     const claimed = await heartbeatAndClaim(mediaTokenHash, sessionId);
     assert.equal(claimed.command?.id, queued.id);
     assert.equal(claimed.command?.status, "claimed");
     assert.equal((await heartbeatAndClaim(mediaTokenHash, sessionId)).command, null);
-    assert.equal(await prepareApprovedAudio(mediaTokenHash, sessionId, queued.id), approval.approvedText);
+    assert.deepEqual(await prepareApprovedAudio(mediaTokenHash, sessionId, queued.id), { text: approval.approvedText, voiceId: firstVoice.id });
     await assert.rejects(
       () => acknowledgeCommand(mediaTokenHash, sessionId, { commandId: queued.id, status: "completed" }),
       (error) => error instanceof MeetingError && error.code === "INVALID_SPEECH_STATE",
@@ -270,6 +289,69 @@ test("Neo4j regression: memory, webhooks, media authority, and speech state", { 
          DETACH DELETE n`,
         { ownerId, sessionId, statusDeliveryId, transcriptDeliveryId, staleStatusDeliveryId: `qa-stale-status-${runId}` },
       );
+    });
+  }
+});
+
+test("automatic suggestions reserve once and respect dismissal suppression", { timeout: 30_000 }, async () => {
+  const ownerId = `qa-auto-${randomUUID()}`;
+  const projectId = randomUUID();
+  const sessionId = randomUUID();
+  const request = { mode: "clarify" as const, selectedUtteranceIds: [], transcriptRevision: 1 };
+  try {
+    await writeQuery(async (tx) => {
+      await tx.run(
+        `CREATE (project:Project {id: $projectId, ownerId: $ownerId, name: 'Auto QA'})
+         CREATE (session:Session {
+           id: $sessionId, ownerId: $ownerId, projectId: $projectId, status: 'listening',
+           transcriptRevision: 1, stopRevision: 0, suggestionVersion: 0, createdAt: $now
+         })
+         CREATE (utterance:Utterance {
+           id: $utteranceId, sessionId: $sessionId, revision: 1, isBot: false,
+           speakerName: 'Alex', text: 'Which plan do you mean?', startMs: 0, endMs: 1000
+         })
+         CREATE (project)-[:HAS_SESSION]->(session)
+         CREATE (session)-[:HAS_UTTERANCE]->(utterance)`,
+        { ownerId, projectId, sessionId, utteranceId: randomUUID(), now: new Date().toISOString() },
+      );
+    });
+    assert.equal((await setAutoSuggestionEnabled(ownerId, sessionId, { enabled: true })).enabled, true);
+
+    const createdAt = new Date().toISOString();
+    const reservations = await Promise.all([
+      reserveSuggestion(ownerId, sessionId, request, randomUUID(), createdAt, "auto"),
+      reserveSuggestion(ownerId, sessionId, request, randomUUID(), createdAt, "auto"),
+    ]);
+    assert.equal(reservations.filter((version) => version !== null).length, 1, "a transcript revision must reserve once");
+
+    const suggestionId = await writeQuery(async (tx) => {
+      const result = await tx.run(
+        `MATCH (session:Session {id: $sessionId})-[:HAS_SUGGESTION]->(suggestion:Suggestion {trigger: 'auto'})
+         SET suggestion.status = 'ready', suggestion.text = 'Which plan?', suggestion.evidenceJson = '[]'
+         RETURN suggestion.id AS id`,
+        { sessionId },
+      );
+      return String(result.records[0].get("id"));
+    });
+    await dismissSuggestion(ownerId, suggestionId);
+    const mutedUntil = await readQuery(async (tx) => {
+      const result = await tx.run(
+        `MATCH (session:Session {id: $sessionId})
+         RETURN session.autoMutedUntilRevision AS revision`,
+        { sessionId },
+      );
+      return result.records[0].get("revision").toNumber();
+    });
+    assert.equal(mutedUntil, 3, "dismissal must suppress the same revision and the next two");
+
+    const speechCount = await readQuery(async (tx) => {
+      const result = await tx.run("MATCH (speech:SpeechCommand {sessionId: $sessionId}) RETURN count(speech) AS count", { sessionId });
+      return result.records[0].get("count").toNumber();
+    });
+    assert.equal(speechCount, 0, "automatic drafts must not enqueue speech");
+  } finally {
+    await writeQuery(async (tx) => {
+      await tx.run("MATCH (node) WHERE node.ownerId = $ownerId OR node.sessionId = $sessionId DETACH DELETE node", { ownerId, sessionId });
     });
   }
 });

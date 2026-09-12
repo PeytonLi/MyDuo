@@ -10,8 +10,8 @@ type Context = { params: Promise<{ id: string }> };
 export async function POST(request: Request, { params }: Context) {
   try {
     assertMutationOrigin(request);
-    const { ownerId } = await requireOperator(request);
     const id = z.string().uuid().parse((await params).id);
+    const { ownerId } = await requireOperator(request, id);
     const input = parseApproval(await request.json());
     return Response.json(await queueSpeech(ownerId, id, input), { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
@@ -22,8 +22,8 @@ export async function POST(request: Request, { params }: Context) {
 export async function DELETE(request: Request, { params }: Context) {
   try {
     assertMutationOrigin(request);
-    const { ownerId } = await requireOperator(request);
     const id = z.string().uuid().parse((await params).id);
+    const { ownerId } = await requireOperator(request, id);
     return Response.json(await stopSpeech(ownerId, id), { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     return meetingErrorResponse(error);

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import OpenAI from "openai";
+import { elevenLabsVoices } from "../src/lib/server/env";
 import { parseModelSuggestion } from "../src/lib/server/suggestions";
 
 const required = (name: string) => {
@@ -29,11 +30,11 @@ test("configured DeepSeek model returns validated JSON", { timeout: 30_000 }, as
 });
 
 test("configured ElevenLabs voice returns playable audio", { timeout: 30_000 }, async () => {
-  const voiceId = required("ELEVENLABS_VOICE_ID");
-  const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`, {
+  const voiceId = elevenLabsVoices()[0].id;
+  const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128&enable_logging=false`, {
     method: "POST",
     headers: { "xi-api-key": required("ELEVENLABS_API_KEY"), "Content-Type": "application/json", Accept: "audio/mpeg" },
-    body: JSON.stringify({ text: "MyDuo provider check.", model_id: process.env.ELEVENLABS_TTS_MODEL?.trim() || "eleven_flash_v2_5", enable_logging: false }),
+    body: JSON.stringify({ text: "MyDuo provider check.", model_id: process.env.ELEVENLABS_TTS_MODEL?.trim() || "eleven_flash_v2_5" }),
     signal: AbortSignal.timeout(20_000),
   });
   assert.equal(response.status, 200);

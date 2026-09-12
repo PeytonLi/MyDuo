@@ -8,7 +8,10 @@ type Profile = {
   priorities: string;
   tone: string;
   responseExamples: string;
+  selectedVoiceId: string;
 };
+
+type VoiceOption = { id: string; name: string };
 
 type MemorySource = {
   id: string;
@@ -21,7 +24,7 @@ type MemorySource = {
 type Project = { id: string; name: string };
 type Memory = { projects: Project[]; sources: MemorySource[] };
 
-const emptyProfile: Profile = { role: "", priorities: "", tone: "Clear and concise", responseExamples: "" };
+const emptyProfile: Profile = { role: "", priorities: "", tone: "Clear and concise", responseExamples: "", selectedVoiceId: "" };
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -36,13 +39,18 @@ export function SetupClient() {
   const [sources, setSources] = useState<MemorySource[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState("");
+  const [voices, setVoices] = useState<VoiceOption[]>([]);
+  const [previewingVoiceId, setPreviewingVoiceId] = useState("");
+  const [previewVoiceId, setPreviewVoiceId] = useState("");
+  const [previewUrl, setPreviewUrl] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    Promise.all([api<Profile>("/api/profile"), api<Memory>("/api/memory")])
-      .then(([savedProfile, memory]) => {
+    Promise.all([api<Profile>("/api/profile"), api<Memory>("/api/memory"), api<VoiceOption[]>("/api/voices")])
+      .then(([savedProfile, memory, availableVoices]) => {
         setProfile({ ...emptyProfile, ...savedProfile });
+        setVoices(availableVoices);
         setSources(memory.sources ?? []);
         setProjects(memory.projects ?? []);
         setProjectId(memory.projects?.[0]?.id ?? "");
@@ -50,6 +58,32 @@ export function SetupClient() {
       })
       .catch(() => setSignedIn(false));
   }, []);
+
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
+
+  async function previewVoice(voiceId: string) {
+    setPreviewingVoiceId(voiceId);
+    setPreviewVoiceId("");
+    setPreviewUrl("");
+    setMessage("");
+    try {
+      const response = await fetch("/api/voices", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ voiceId }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.message ?? "Could not preview that voice.");
+      }
+      setPreviewUrl(URL.createObjectURL(await response.blob()));
+      setPreviewVoiceId(voiceId);
+      setPreviewingVoiceId("");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not preview that voice.");
+      setPreviewingVoiceId("");
+    }
+  }
 
   async function signIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -217,6 +251,16 @@ export function SetupClient() {
           </select>
           <label htmlFor="example">A phrase that sounds like you <span className="optional">optional</span></label>
           <textarea id="example" value={profile.responseExamples} onChange={(event) => setProfile({ ...profile, responseExamples: event.target.value })} placeholder="I think we can do that if we narrow the first release…" maxLength={4000} rows={3} />
+          <fieldset className="voice-picker">
+            <legend>MyDuo voice</legend>
+            {voices.map((voice) => (
+              <div className="voice-option" key={voice.id}>
+                <label><input type="radio" name="selectedVoiceId" value={voice.id} checked={profile.selectedVoiceId === voice.id} onChange={() => setProfile({ ...profile, selectedVoiceId: voice.id })} /><span>{voice.name}</span></label>
+                <button className="text-button" type="button" disabled={Boolean(previewingVoiceId)} onClick={() => previewVoice(voice.id)}>{previewingVoiceId === voice.id && !previewUrl ? "Loading…" : "Preview"}</button>
+                {previewVoiceId === voice.id && previewUrl && <audio controls autoPlay src={previewUrl}>Your browser cannot play this preview.</audio>}
+              </div>
+            ))}
+          </fieldset>
           <button className="button button-secondary" disabled={busy}>Save profile</button>
         </form>
 
@@ -236,8 +280,8 @@ export function SetupClient() {
 
         <form className="panel launch-panel" onSubmit={startMeeting}>
           <div className="launch-copy"><span className="step-number inverse">03</span><div><p className="section-kicker">Join the room</p><h2>Start a meeting session</h2><p>Your assistant joins as a visible participant. The host may need to admit it.</p></div></div>
-          <label htmlFor="meetingUrl">Google Meet link</label>
-          <div className="launch-row"><input id="meetingUrl" name="meetingUrl" type="url" placeholder="https://meet.google.com/abc-defg-hij" pattern="https://meet\.google\.com/.+" required /><button className="button button-accent" disabled={busy || !projectId}>{busy ? "Starting…" : "Start MyDuo"}</button></div>
+          <label htmlFor="meetingUrl">Google Meet or Zoom link</label>
+          <div className="launch-row"><input id="meetingUrl" name="meetingUrl" type="url" placeholder="https://meet.google.com/abc-defg-hij" required /><button className="button button-accent" disabled={busy || !projectId}>{busy ? "Starting…" : "Start MyDuo"}</button></div>
           <label className="check-row consent"><input type="checkbox" required /><span>I confirm that participants know an AI assistant will listen to this meeting.</span></label>
           <p className="screen-share-note">Your suggestions stay in this window, but they can be seen if you share this screen.</p>
         </form>

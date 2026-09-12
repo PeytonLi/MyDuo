@@ -91,12 +91,68 @@ async function deleteSession(driver: Driver, sessionId: string) {
   }
 }
 
+async function withEndedReviewSession(driver: Driver) {
+  const sessionId = randomUUID();
+  const projectId = randomUUID();
+  const utteranceId = randomUUID();
+  const candidateId = randomUUID();
+  const sourceId = randomUUID();
+  const factId = randomUUID();
+  const session = driver.session({ database: process.env.NEO4J_DATABASE || "neo4j" });
+  try {
+    await session.run(
+      `CREATE (project:Project {id: $projectId, ownerId: 'demo-owner', name: 'Browser review regression'})
+       CREATE (s:Session {
+         id: $sessionId, ownerId: 'demo-owner', projectId: $projectId,
+         meetingUrl: 'https://meet.google.com/abc-defg-hij', status: 'ended',
+         transcriptRevision: 1, stopRevision: 0, reviewExtractionStatus: 'ready',
+         createdAt: $now, updatedAt: $now
+       })
+       CREATE (u:Utterance {
+         id: $utteranceId, sessionId: $sessionId, speakerName: 'Alex',
+         text: 'We agreed the integration ships after the audit.', startMs: 1000, endMs: 3000,
+         revision: 1, isBot: false, createdAt: $now
+       })
+       CREATE (c:ReviewCandidate {
+         id: $candidateId, ownerId: 'demo-owner', sessionId: $sessionId, projectId: $projectId,
+         factKind: 'dependency', text: 'The integration ships after the audit.', ownerName: null,
+         evidenceIds: [$utteranceId], status: 'pending', position: 0,
+         sourceId: $sourceId, factId: $factId, createdAt: $now
+       })
+       CREATE (project)-[:HAS_SESSION]->(s)
+       CREATE (s)-[:HAS_UTTERANCE]->(u)
+       CREATE (s)-[:HAS_REVIEW_CANDIDATE]->(c)`,
+      { projectId, sessionId, utteranceId, candidateId, sourceId, factId, now: new Date().toISOString() },
+    );
+  } finally {
+    await session.close();
+  }
+  return { sessionId, projectId, sourceId, factId };
+}
+
+async function deleteReviewSession(driver: Driver, fixture: { sessionId: string; projectId: string; sourceId: string; factId: string }) {
+  const session = driver.session({ database: process.env.NEO4J_DATABASE || "neo4j" });
+  try {
+    await session.run(
+      `MATCH (n)
+       WHERE n.sessionId = $sessionId OR n.scopedSessionId = $sessionId OR (n:Session AND n.id = $sessionId)
+          OR n.id IN [$projectId, $sourceId, $factId]
+       DETACH DELETE n`,
+      { ...fixture },
+    );
+  } finally {
+    await session.close();
+  }
+}
+
 test("logged-out access is private and login validation is clear", async ({ page }) => {
   const errors = watchErrors(page);
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Stay in the conversation." })).toBeVisible();
   await expect(page.getByLabel("Access secret")).toHaveAttribute("autocomplete", "current-password");
   expect((await page.request.get("/api/profile")).status()).toBe(401);
+  expect((await page.request.get("/api/voices")).status()).toBe(401);
+  expect((await page.request.post("/api/voices", { data: { voiceId: "EXAVITQu4vr4xnSDxMaL" }, headers: { authorization: `Bearer ${"a".repeat(32)}` } })).status()).toBe(401);
   await page.getByLabel("Access secret").fill("not-the-secret");
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.locator(".form-message")).toContainText("not valid");
@@ -162,8 +218,83 @@ test("core controls fit the viewport and expose accessible names", async ({ page
   await login(page);
   await expect(page.getByLabel("Your role")).toBeVisible();
   await expect(page.getByLabel("Preferred tone")).toBeVisible();
+  await expect(page.getByRole("group", { name: "MyDuo voice" })).toBeVisible();
+  await expect(page.getByRole("radio")).toHaveCount(3);
+  expect((await page.request.post("/api/voices", { data: { voiceId: "not-an-allowed-voice" } })).status()).toBe(400);
   await expect(page.getByRole("button", { name: "Save profile" })).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
   expect(errors).toEqual([]);
+});
+
+test("auto-suggest toggle reflects operator intent without drafting", async ({ page }) => {
+  const errors = watchErrors(page);
+  const driver = databaseDriver();
+  const fixture = await withSession(driver);
+  try {
+    await login(page);
+    await page.goto(`/meeting/${fixture.sessionId}`);
+    const toggle = page.getByRole("button", { name: "Auto-suggest questions" });
+    await expect(toggle).toBeVisible();
+    await toggle.click();
+    await expect(page.locator(".meeting-notice")).toContainText("Automatic private questions are on.");
+    await expect(page.getByRole("button", { name: "Pause automatic questions" })).toBeVisible();
+    const state = await (await page.request.get(`/api/sessions/${fixture.sessionId}/auto-suggestions`)).json() as { enabled: boolean };
+    expect(state.enabled).toBe(true);
+    await page.getByRole("button", { name: "Pause automatic questions" }).click();
+    await expect(page.locator(".meeting-notice")).toContainText("Automatic questions paused");
+    expect(errors).toEqual([]);
+  } finally {
+    await deleteSession(driver, fixture.sessionId);
+    await driver.close();
+  }
+});
+
+test("ended meeting review saves curated memory", async ({ page }) => {
+  const errors = watchErrors(page);
+  const driver = databaseDriver();
+  const fixture = await withEndedReviewSession(driver);
+  try {
+    await login(page);
+    await page.goto(`/meeting/${fixture.sessionId}`);
+    await page.getByRole("link", { name: "Review meeting memory" }).click();
+    await expect(page.getByRole("heading", { name: "What should MyDuo remember?" })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Memory", exact: true })).toHaveValue("The integration ships after the audit.");
+    await page.getByLabel("Save this memory").check();
+    await page.getByRole("button", { name: "Save accepted" }).click();
+    await expect(page.getByRole("status")).toContainText("1 memory item saved.");
+    const memory = await (await page.request.get("/api/memory")).json() as { facts: { id: string; text: string; kind: string }[] };
+    const saved = memory.facts.find((fact) => fact.id === fixture.factId);
+    expect(saved?.text).toBe("The integration ships after the audit.");
+    expect(saved?.kind).toBe("dependency");
+    expect(errors).toEqual([]);
+  } finally {
+    await deleteReviewSession(driver, fixture);
+    await driver.close();
+  }
+});
+
+test("meet side panel pairs one-use with the active session", async ({ page }) => {
+  const errors = watchErrors(page);
+  await login(page);
+  await page.goto("/meet-addon");
+  await expect(page.getByRole("heading", { name: "Pair with your active session" })).toBeVisible();
+  await expect(page.getByLabel("Pairing code")).toBeVisible();
+
+  const driver = databaseDriver();
+  const fixture = await withSession(driver);
+  try {
+    const paired = await page.request.post("/api/addon/pair", { data: { sessionId: fixture.sessionId } });
+    expect(paired.ok()).toBe(true);
+    const { code } = await paired.json() as { code: string };
+    const exchanged = await page.request.post("/api/addon/exchange", { data: { code } });
+    expect(exchanged.ok()).toBe(true);
+    const body = await exchanged.json() as { sessionId: string };
+    expect(body.sessionId).toBe(fixture.sessionId);
+    expect((await page.request.post("/api/addon/exchange", { data: { code } })).status()).toBe(401);
+    expect(errors).toEqual([]);
+  } finally {
+    await deleteSession(driver, fixture.sessionId);
+    await driver.close();
+  }
 });

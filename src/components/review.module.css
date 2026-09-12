@@ -1,0 +1,16 @@
+.shell { margin: 0 auto; max-width: 1060px; min-height: 100vh; padding: 26px clamp(20px, 5vw, 70px) 120px; }
+.topbar { align-items: center; display: flex; justify-content: space-between; }
+.intro { margin: 80px 0 36px; max-width: 760px; }
+.intro h1 { font-size: clamp(3rem, 6vw, 5.8rem); line-height: .92; margin-bottom: 24px; }
+.intro > p:last-child { color: var(--ink-soft); line-height: 1.55; }
+.list { display: grid; gap: 16px; }
+.card { background: var(--cream); border: 1px solid var(--line); box-shadow: 7px 7px 0 var(--paper-deep); padding: clamp(22px, 4vw, 38px); }
+.card.done { box-shadow: none; opacity: .62; }
+.cardTop { align-items: center; display: flex; justify-content: space-between; }
+.cardTop span { color: var(--signal-dark); font-family: ui-monospace, monospace; font-size: .68rem; }
+.cardTop strong { font-size: .68rem; letter-spacing: .12em; text-transform: uppercase; }
+.actions { align-items: center; border-top: 1px solid var(--paper-deep); display: flex; justify-content: space-between; margin-top: 25px; padding-top: 18px; }
+.actions label { margin: 0; }
+.saveBar { align-items: center; background: var(--ink); bottom: 0; color: var(--cream); display: flex; justify-content: space-between; left: 50%; max-width: 920px; padding: 16px 20px; position: fixed; transform: translateX(-50%); width: calc(100% - 36px); }
+.saveBar span { font-size: .78rem; font-weight: 750; }
+@media (max-width: 560px) { .intro { margin-top: 55px; } .actions { align-items: flex-start; gap: 12px; } }

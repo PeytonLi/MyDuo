@@ -1,0 +1,22 @@
+.shell { background: #f5f1e8; color: #171713; min-height: 100vh; padding: 18px; }
+.pairing, .panel { display: grid; gap: 14px; margin: 0 auto; max-width: 420px; }
+.pairing h1 { font-family: Georgia, serif; font-size: 2rem; line-height: 1; margin: 10px 0 0; }
+.pairing p { color: #59584f; line-height: 1.5; margin: 0; }
+.pairing form, .composer { display: grid; gap: 8px; }
+.pairing input { font-size: 1.4rem; letter-spacing: .18em; text-transform: uppercase; }
+.shell input, .shell select, .shell textarea { background: #fffdf7; border: 1px solid #b7b3a8; border-radius: 8px; color: inherit; padding: 11px; width: 100%; }
+.shell button { background: #1d1d18; border: 0; border-radius: 999px; color: white; cursor: pointer; font-weight: 700; padding: 11px 16px; }
+.shell button:disabled { cursor: not-allowed; opacity: .45; }
+.eyebrow { color: #cc552d !important; font-size: .7rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.loading { margin: 30vh auto; text-align: center; }
+.panel header { align-items: center; display: flex; justify-content: space-between; }
+.panel header > span { color: #39715c; font-size: .7rem; font-weight: 800; text-transform: uppercase; }
+.notice { background: #fff5d9; border-radius: 8px; padding: 10px; }
+.transcript { border-bottom: 1px solid #d3cec2; border-top: 1px solid #d3cec2; display: grid; gap: 12px; max-height: 230px; overflow-y: auto; padding: 14px 0; }
+.transcript p { display: grid; gap: 3px; margin: 0; }
+.transcript strong { font-size: .72rem; }
+.draft { border-left: 3px solid #cc552d; display: grid; gap: 9px; padding-left: 12px; }
+.draft > div { display: flex; gap: 8px; }
+.draft .stop { background: transparent; border: 1px solid #9f352e; color: #9f352e; }
+.panel .end { background: transparent; border: 1px solid #9f352e; color: #9f352e; justify-self: start; }
+.panel small { color: #66645b; line-height: 1.4; }

@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { approvalRequestSchema, speechStateSchema, type ApprovalRequest, type SpeechState } from "../contracts";
 import { readQuery, writeQuery } from "./db";
-import { elevenLabsConfig } from "./env";
+import { allowedVoice, elevenLabsConfig, elevenLabsVoices } from "./env";
 import { MeetingError } from "./meetings";
 
 const bootstrapSchema = z.object({
@@ -21,6 +21,22 @@ const TRANSITIONS: Record<string, string[]> = {
   preparing: ["playing", "failed", "uncertain"],
   playing: ["completed", "failed", "uncertain"],
 };
+
+export const VOICE_PREVIEW_TEXT = "Hi, I’m your MyDuo. I’ll speak only when you approve it.";
+
+// ponytail: this limiter targets the single-instance demo; move it to shared storage before horizontal scaling.
+const previewWindows = new Map<string, { count: number; resetAt: number }>();
+
+export function consumeVoicePreview(ownerId: string, now = Date.now()) {
+  const current = previewWindows.get(ownerId);
+  if (!current || current.resetAt <= now) {
+    previewWindows.set(ownerId, { count: 1, resetAt: now + 60_000 });
+    return true;
+  }
+  if (current.count >= 5) return false;
+  current.count += 1;
+  return true;
+}
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const asNumber = (value: unknown) =>
@@ -97,14 +113,16 @@ export async function queueSpeech(ownerId: string, sessionId: string, input: App
       `MATCH (s:Session {id: $sessionId, ownerId: $ownerId})-[:HAS_SUGGESTION]->(g:Suggestion {
          id: $suggestionId, version: $version
        })
+       MATCH (u:User {id: $ownerId})
        OPTIONAL MATCH (active:SpeechCommand {id: s.activeSpeechId})
-       RETURN s, g, active`,
+       RETURN s, g, u, active`,
       { sessionId, ownerId, suggestionId: input.suggestionId, version: input.version },
     );
     if (!result.records.length) throw new MeetingError("Suggestion or meeting not found", "SUGGESTION_NOT_FOUND", 404);
     const record = result.records[0];
     const session = record.get("s").properties as Record<string, unknown>;
     const suggestion = record.get("g").properties as Record<string, unknown>;
+    const user = record.get("u").properties as Record<string, unknown>;
     const active = record.get("active")?.properties as Record<string, unknown> | undefined;
 
     if (session.status !== "listening") throw new MeetingError("The bot is not ready to speak", "SESSION_NOT_LISTENING", 409);
@@ -117,18 +135,20 @@ export async function queueSpeech(ownerId: string, sessionId: string, input: App
     }
 
     const id = randomUUID();
+    const voiceId = allowedVoice(String(user.selectedVoiceId ?? ""))?.id ?? elevenLabsVoices()[0].id;
     const created = await tx.run(
       `MATCH (s:Session {id: $sessionId, ownerId: $ownerId})-[:HAS_SUGGESTION]->(g:Suggestion {id: $suggestionId})
        CREATE (c:SpeechCommand {
          id: $id, sessionId: $sessionId, clientRequestId: $clientRequestId,
          suggestionId: $suggestionId, suggestionVersion: $version,
          approvedText: $approvedText, reviewedTranscriptRevision: $reviewedTranscriptRevision,
+         voiceId: $voiceId,
          status: 'queued', createdAt: $now, updatedAt: $now, expiresAt: $expiresAt
        })
        CREATE (s)-[:HAS_SPEECH]->(c)
        SET s.activeSpeechId = $id, s.updatedAt = $now, g.status = 'approved', g.updatedAt = $now
        RETURN c`,
-      { id, sessionId, ownerId, ...input, now, expiresAt },
+      { id, sessionId, ownerId, voiceId, ...input, now, expiresAt },
     );
     return mapSpeech(created.records[0].get("c").properties);
   });
@@ -225,23 +245,28 @@ export async function prepareApprovedAudio(mediaTokenHash: string, sessionId: st
              (s:Session {id: $sessionId}), (c:SpeechCommand {id: $commandId, sessionId: $sessionId, status: 'claimed'})
        WHERE a.expiresAt > datetime() AND s.activeSpeechId = c.id AND datetime(c.expiresAt) > datetime()
        SET c.status = 'preparing', c.updatedAt = $now
-       RETURN c.approvedText AS approvedText`,
+       RETURN c.approvedText AS approvedText, c.voiceId AS voiceId`,
       { mediaTokenHash, sessionId, commandId, now: new Date().toISOString() },
     );
-    const text = result.records[0]?.get("approvedText");
-    if (typeof text !== "string") throw new MeetingError("Speech command cannot be prepared", "COMMAND_NOT_CLAIMED", 409);
-    return text;
+    const record = result.records[0];
+    const text = record?.get("approvedText");
+    const voiceId = record?.get("voiceId");
+    if (typeof text !== "string" || typeof voiceId !== "string") {
+      throw new MeetingError("Speech command cannot be prepared", "COMMAND_NOT_CLAIMED", 409);
+    }
+    return { text, voiceId };
   });
 }
 
-export async function synthesizeApprovedText(text: string) {
-  const { apiKey, voiceId, model } = elevenLabsConfig();
+export async function synthesizeApprovedText(text: string, voiceId: string) {
+  if (!allowedVoice(voiceId)) throw new MeetingError("Voice is not available", "VOICE_NOT_ALLOWED", 400);
+  const { apiKey, model } = elevenLabsConfig();
   const response = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`,
+    `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128&enable_logging=false`,
     {
       method: "POST",
       headers: { "xi-api-key": apiKey, "Content-Type": "application/json", Accept: "audio/mpeg" },
-      body: JSON.stringify({ text, model_id: model, enable_logging: false }),
+      body: JSON.stringify({ text, model_id: model }),
       signal: AbortSignal.timeout(20_000),
     },
   );
