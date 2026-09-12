@@ -1,0 +1,45 @@
+services:
+  - type: web
+    name: myduo
+    runtime: node
+    plan: starter
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    startCommand: pnpm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 24.14.0
+      - key: APP_BASE_URL
+        sync: false
+      - key: DEMO_ACCESS_SECRET
+        generateValue: true
+      - key: NEO4J_URI
+        sync: false
+      - key: NEO4J_USERNAME
+        sync: false
+      - key: NEO4J_PASSWORD
+        sync: false
+      - key: NEO4J_DATABASE
+        sync: false
+      - key: RECALL_API_KEY
+        sync: false
+      - key: RECALL_REGION
+        value: us-west-2
+      - key: RECALL_WORKSPACE_VERIFICATION_SECRET
+        sync: false
+      - key: RECALL_STATUS_WEBHOOK_SECRET
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: ELEVENLABS_VOICE_ID
+        sync: false
+      - key: ELEVENLABS_TTS_MODEL
+        value: eleven_flash_v2_5
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DEEPSEEK_BASE_URL
+        value: https://api.deepseek.com
+      - key: DEEPSEEK_MODEL
+        value: deepseek-flash
+      - key: DEMO_MODE
+        value: "false"

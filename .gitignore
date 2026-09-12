@@ -1,0 +1,15 @@
+# Local secrets
+.env.local
+.env*.local
+
+# Next.js and Node output
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.playwright-cli/
+
+# Logs and local tooling
+*.log
+.DS_Store
+Thumbs.db
