@@ -29,4 +29,4 @@ The final source passed `pnpm check:all`: TypeScript, ESLint, nine unit checks, 
 
 ## Next live gate
 
-Deploy `render.yaml`, copy the private environment values into Render, set `APP_BASE_URL` to the deployed HTTPS origin, and run one two-participant Google Meet test. That test must prove visible bot admission, committed transcript delivery, exact approved audio heard by the other participant, Stop, and confirmed bot departure.
+The service is deployed at `https://myduo-daqq.onrender.com` with `APP_BASE_URL` set, the Recall workspace status webhook subscribed to `/api/webhooks/recall/status` (signing secret matches the workspace verification secret), and the deployed routes verified: health ok, operator login ok, Neo4j seed reachable, foreign-origin mutations rejected, unsigned webhooks rejected. Run one two-participant Google Meet test from the deployed origin. That test must prove visible bot admission, committed transcript delivery, exact approved audio heard by the other participant, Stop, and confirmed bot departure.

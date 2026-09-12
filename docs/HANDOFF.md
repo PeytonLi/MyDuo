@@ -1,14 +1,14 @@
 # MyDuo — Implementation handoff
 
-Updated: 2026-09-12. The local MVP and all code-side stretch features are implemented and verified; deployment, live Google Meet acceptance, and the Google Cloud add-on test deployment remain.
+Updated: 2026-09-12. The local MVP and all code-side stretch features are implemented, verified, and deployed. Live Google Meet acceptance and the Google Cloud add-on test deployment remain.
 
 ## Current state
 
-The current working tree contains the complete local hackathon MVP — operator login, profile and Neo4j memory, Recall session/webhooks, live transcript UI, three DeepSeek assistance modes, evidence display, editing, explicit speech approval, ElevenLabs media playback, Stop, and session end — plus the stretch features from [the stretch plan](STRETCH-PLAN.md): automatic private clarification suggestions, reviewed post-meeting decisions that become grounded memory, curated voice personalization with per-command voice binding, the Google Meet side-panel pairing prototype, and Google Meet + Zoom platform support with platform-aware admission copy.
+The repository at commit `3a794bd` and later contains the complete local hackathon MVP — operator login, profile and Neo4j memory, Recall session/webhooks, live transcript UI, three DeepSeek assistance modes, evidence display, editing, explicit speech approval, ElevenLabs media playback, Stop, and session end — plus the stretch features from [the stretch plan](STRETCH-PLAN.md): automatic private clarification suggestions, reviewed post-meeting decisions that become grounded memory, curated voice personalization with per-command voice binding, the Google Meet side-panel pairing prototype, and Google Meet + Zoom platform support with platform-aware admission copy.
 
 The full deterministic suite passes: 11 unit, 5 Neo4j integration, 14 desktop/mobile browser tests, production build, and dependency audit; the three live provider smoke tests also pass. See [setup results](SETUP-RESULTS.md), [QA results](QA-RESULTS.md), and [acceptance results](ACCEPTANCE-RESULTS.md).
 
-The service has not been deployed. `APP_BASE_URL` is therefore intentionally empty, and the real Google Meet join, transcript callback, remote audio, interruption, and departure gates remain blocked on a public Render URL. The Meet side-panel prototype is code-complete (pairing codes, scoped add-on tokens, CSP, SDK hook) but is not installed in a Google Cloud test deployment; `GOOGLE_MEET_ADDON_CLOUD_PROJECT_NUMBER` is unset.
+The service is deployed to Render at `https://myduo-daqq.onrender.com` (Starter plan, Oregon). Verified on 2026-09-12: `/api/health` returns ok; operator login works; Neo4j memory and the Atlas seed are reachable; voices are configured; same-origin mutations pass and foreign origins are rejected (`APP_BASE_URL` is set correctly); unsigned webhook deliveries to both Recall routes are rejected with 401. The Recall workspace status webhook subscription points at `/api/webhooks/recall/status` with a signing secret matching `RECALL_WORKSPACE_VERIFICATION_SECRET`. The live two-participant meeting gate and the Google Cloud add-on test deployment remain: `GOOGLE_MEET_ADDON_CLOUD_PROJECT_NUMBER` is unset.
 
 ## Canonical documents
 
@@ -33,12 +33,10 @@ Do not copy the PRD into another handoff. Keep technical contracts in Architectu
 
 ## Next actions
 
-1. Deploy the existing `render.yaml` service and set its private environment values.
-2. Set `APP_BASE_URL` to the final Render HTTPS origin and redeploy.
-3. Run the live gate described in [setup results](SETUP-RESULTS.md) with a second participant, including one Zoom run for the second-platform gate.
-4. Record live outcomes and latency samples in [acceptance results](ACCEPTANCE-RESULTS.md).
-5. Create a Google Cloud Workspace Add-on test deployment from `google-workspace-addon/deployment.json.example`, set `GOOGLE_MEET_ADDON_CLOUD_PROJECT_NUMBER`, and verify the side panel with third-party cookies disabled.
-6. Create the demo runbook and backup recording only after the live flow succeeds.
+1. Run the live gate described in [setup results](SETUP-RESULTS.md) with a second participant, including one Zoom run for the second-platform gate.
+2. Record live outcomes and latency samples in [acceptance results](ACCEPTANCE-RESULTS.md).
+3. Create a Google Cloud Workspace Add-on test deployment from `google-workspace-addon/deployment.json.example`, set `GOOGLE_MEET_ADDON_CLOUD_PROJECT_NUMBER`, and verify the side panel with third-party cookies disabled.
+4. Create the demo runbook and backup recording only after the live flow succeeds.
 
 ## Missing inputs and known uncertainty
 
