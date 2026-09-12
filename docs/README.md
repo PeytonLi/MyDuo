@@ -1,7 +1,7 @@
 # MyDuo planning documents
 
-Status: planning complete; application implementation has not started.
-Prepared: 2026-09-11 (America/Los_Angeles).
+Status: tested MVP implemented; stretch work planned.
+Updated: 2026-09-12 (America/Los_Angeles).
 
 MyDuo is a personal meeting copilot that uses your context to suggest answers, recover supporting details, and formulate clarifying questions. Suggestions appear privately; the meeting bot speaks only text you approve.
 
@@ -13,6 +13,7 @@ MyDuo is a personal meeting copilot that uses your context to suggest answers, r
 4. [Phase 2: features](phases/02-FEATURES.md): independent workstreams, ownership, subtasks, and integration submissions.
 5. [Phase 3: integration and testing](phases/03-INTEGRATION-TESTING.md): assembled flow, failure tests, acceptance evidence, and demo preparation.
 6. [Handoff](HANDOFF.md): concise starting context for the next implementation session.
+7. [Stretch-feature plan](STRETCH-PLAN.md): deployment gate, proactive suggestions, reviewed memory, voice choice, Meet add-on, and second-platform sequence.
 
 ## Planning assumptions
 
@@ -21,7 +22,7 @@ MyDuo is a personal meeting copilot that uses your context to suggest answers, r
 - The baseline is a separate private companion web panel and one Google Meet meeting, with a visible bot. A native Meet/Zoom sidebar is a later option.
 - “Parallel with submissions” is covered as bounded implementation workstreams with reviewable submissions. Hackathon submission preparation is also included in Phase 3; actual event rules remain unknown.
 - A 24–48-hour hackathon is a planning assumption, not a promised estimate. Team size, deadline, sponsor requirements, and API credits are not yet known.
-- These documents authorize no implementation by themselves. The present request is to prepare and save planning documents only.
+- The initial MVP is implemented and tested. The stretch plan records the next implementation sequence and its gates.
 
 ## Document ownership
 

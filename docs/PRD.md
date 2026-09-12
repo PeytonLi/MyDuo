@@ -69,6 +69,8 @@ The distinguishing demonstration is the connection between personal memory, pres
 3. Save reviewed decisions after the meeting.
 4. Add another meeting platform or voice personalization after the existing flow remains reliable.
 
+The implementation sequence was updated after the MVP and current Google Meet add-on requirements were verified. See [Stretch-feature plan](STRETCH-PLAN.md).
+
 Fully autonomous interruptions, multi-agent debate, live web research, calendar integration, billing, multi-tenant account management, and a complete digital personality are excluded from this build.
 
 ## 5. Core user journey
