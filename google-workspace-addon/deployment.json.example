@@ -1,19 +1,17 @@
 {
-  "oauthScopes": [],
   "addOns": {
     "common": {
       "name": "MyDuo",
       "logoUrl": "https://YOUR_RENDER_HOST/logo.png"
     },
     "meet": {
-      "web": [
-        {
-          "sidePanelUrl": "https://YOUR_RENDER_HOST/meet-addon",
-          "addOnOrigins": ["https://YOUR_RENDER_HOST"],
-          "logoUrl": "https://YOUR_RENDER_HOST/logo.png",
-          "supportsScreenSharing": false
-        }
-      ]
+      "web": {
+        "sidePanelUrl": "https://YOUR_RENDER_HOST/meet-addon",
+        "addOnOrigins": ["https://YOUR_RENDER_HOST"],
+        "logoUrl": "https://YOUR_RENDER_HOST/logo.png",
+        "darkModeLogoUrl": "https://YOUR_RENDER_HOST/logo.png",
+        "supportsScreenSharing": false
+      }
     }
   }
 }

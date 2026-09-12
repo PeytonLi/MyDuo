@@ -1,19 +1,17 @@
 {
-  "oauthScopes": [],
   "addOns": {
     "common": {
       "name": "MyDuo",
       "logoUrl": "https://myduo-daqq.onrender.com/logo.png"
     },
     "meet": {
-      "web": [
-        {
-          "sidePanelUrl": "https://myduo-daqq.onrender.com/meet-addon",
-          "addOnOrigins": ["https://myduo-daqq.onrender.com"],
-          "logoUrl": "https://myduo-daqq.onrender.com/logo.png",
-          "supportsScreenSharing": false
-        }
-      ]
+      "web": {
+        "sidePanelUrl": "https://myduo-daqq.onrender.com/meet-addon",
+        "addOnOrigins": ["https://myduo-daqq.onrender.com"],
+        "logoUrl": "https://myduo-daqq.onrender.com/logo.png",
+        "darkModeLogoUrl": "https://myduo-daqq.onrender.com/logo.png",
+        "supportsScreenSharing": false
+      }
     }
   }
 }
