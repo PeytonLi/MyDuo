@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { getDriver, readQuery, writeQuery } from "../src/lib/server/db";
 import { getSuggestionContext } from "../src/lib/server/memory";
-import { boundReviewTranscript, extractMeetingReview, formatAcceptedSourceText, parseReviewOutput, updateReviewCandidate } from "../src/lib/server/reviews";
+import { boundReviewTranscript, createQuickNote, extractMeetingReview, formatAcceptedSourceText, parseReviewOutput, updateReviewCandidate } from "../src/lib/server/reviews";
 
 const id = () => randomUUID();
 
@@ -84,6 +84,51 @@ test("accepted review memory is scoped, exact, and idempotent", { timeout: 30_00
       { sourceId: rejectedSourceId, factId: rejectedFactId },
     ));
     assert.equal(rejectedMemory.records[0].get("count").toNumber(), 0, "rejected candidates must not create memory");
+  } finally {
+    await writeQuery(async (tx) => { await tx.run("MATCH (n) WHERE n.ownerId IN [$ownerId, $otherOwnerId] DETACH DELETE n", { ownerId, otherOwnerId }); });
+  }
+});
+
+test("quick notes capture during a live meeting and surface in review", { timeout: 30_000 }, async () => {
+  const ownerId = `qa-quick-${id()}`;
+  const otherOwnerId = `qa-quick-other-${id()}`;
+  const projectId = id();
+  const sessionId = id();
+  const utteranceId = id();
+  try {
+    await writeQuery(async (tx) => tx.run(
+      `CREATE (project:Project {id: $projectId, ownerId: $ownerId, name: 'Quick QA'})
+       CREATE (session:Session {id: $sessionId, ownerId: $ownerId, projectId: $projectId,
+         status: 'listening', transcriptRevision: 1, updatedAt: $now})
+       CREATE (utterance:Utterance {id: $utteranceId, sessionId: $sessionId, speakerName: 'Alex',
+         text: 'The audit blocks the launch.', startMs: 0, revision: 1, isBot: false})
+       CREATE (project)-[:HAS_SESSION]->(session)
+       CREATE (session)-[:HAS_UTTERANCE]->(utterance)`,
+      { ownerId, projectId, sessionId, utteranceId, now: new Date().toISOString() },
+    ));
+
+    await assert.rejects(() => createQuickNote(otherOwnerId, sessionId, { text: "Someone else's note." }));
+    await assert.rejects(() => createQuickNote(ownerId, sessionId, { text: "Stolen evidence.", selectedUtteranceIds: [id()] }),
+      /Selected transcript lines do not belong to this meeting/);
+
+    const note = await createQuickNote(ownerId, sessionId, { text: "Launch waits on the audit.", selectedUtteranceIds: [utteranceId] });
+    assert.equal(note.status, "pending");
+    assert.deepEqual(note.evidenceIds, [utteranceId]);
+
+    await writeQuery(async (tx) => tx.run(
+      "MATCH (session:Session {id: $sessionId, ownerId: $ownerId}) SET session.status = 'ended', session.reviewExtractionStatus = ''",
+      { ownerId, sessionId },
+    ));
+
+    const candidates = await extractMeetingReview(ownerId, sessionId);
+    const reviewNote = candidates.find((candidate) => candidate.id === note.id);
+    assert.ok(reviewNote, "quick note must survive into the meeting review");
+    assert.equal(reviewNote?.text, "Launch waits on the audit.");
+    assert.equal(reviewNote?.factKind, "decision");
+    const accepted = await updateReviewCandidate(ownerId, note.id, {
+      action: "accept", factKind: "dependency", text: "Launch waits on the audit.", ownerName: null,
+    });
+    assert.equal(accepted.status, "accepted");
   } finally {
     await writeQuery(async (tx) => { await tx.run("MATCH (n) WHERE n.ownerId IN [$ownerId, $otherOwnerId] DETACH DELETE n", { ownerId, otherOwnerId }); });
   }

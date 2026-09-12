@@ -172,6 +172,27 @@ export function SetupClient() {
     }
   }
 
+  async function deleteSource(source: MemorySource) {
+    if (!window.confirm(`Delete "${source.title}"? This cannot be undone.`)) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const result = await api<{ deleted: boolean; invalidatedSuggestions: number }>("/api/memory", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind: "source", id: source.id }),
+      });
+      setSources((current) => current.filter((item) => item.id !== source.id));
+      setMessage(result.invalidatedSuggestions
+        ? `Note deleted. ${result.invalidatedSuggestions} draft suggestion${result.invalidatedSuggestions === 1 ? "" : "s"} using it ${result.invalidatedSuggestions === 1 ? "was" : "were"} withdrawn.`
+        : "Note deleted.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not delete that note.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function startMeeting(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
@@ -273,7 +294,7 @@ export function SetupClient() {
           <textarea id="text" name="text" placeholder="The internal preview can happen Friday. Public launch depends on the security review…" maxLength={20000} rows={8} required />
           <label className="check-row"><input name="allowedForMeeting" type="checkbox" /><span><strong>Allow in meeting suggestions</strong><small>Private by default. Turn this on only for notes MyDuo may use in a spoken draft.</small></span></label>
           <button className="button button-secondary" disabled={busy || !projectId}>Add to memory</button>
-          {sources.length > 0 && <div className="saved-notes"><p className="section-kicker">Ready for this meeting</p>{sources.filter((source) => !projectId || source.projectId === projectId).slice(0, 3).map((source) => <div className="saved-note" key={source.id}><span>{source.title}</span><small>{source.allowMeetingUse ? "Available" : "Private"}</small></div>)}</div>}
+          {sources.length > 0 && <div className="saved-notes"><p className="section-kicker">Ready for this meeting</p>{sources.filter((source) => !projectId || source.projectId === projectId).slice(0, 3).map((source) => <div className="saved-note" key={source.id}><span>{source.title}</span><small>{source.allowMeetingUse ? "Available" : "Private"}</small><button className="text-button danger" type="button" disabled={busy} onClick={() => deleteSource(source)}>Delete</button></div>)}</div>}
         </form>
 
         {!projects.length && <form className="panel project-panel" onSubmit={addProject}><div className="panel-heading"><span className="step-number">+</span><div><p className="section-kicker">First step</p><h2>Name this project</h2></div></div><label htmlFor="projectName">Project name</label><div className="launch-row"><input id="projectName" name="projectName" maxLength={120} placeholder="Hackathon demo" required /><button className="button button-secondary" disabled={busy}>Create project</button></div></form>}

@@ -8,6 +8,49 @@ import { readQuery, writeQuery } from "./db";
 import { deepSeekConfig } from "./env";
 
 const factKindSchema = z.enum(["decision", "dependency", "deadline", "responsibility"]);
+const quickNoteSchema = z.object({
+  text: z.string().trim().min(1).max(2_000),
+  selectedUtteranceIds: z.array(z.string().uuid()).max(10).default([]),
+}).strict();
+export type QuickNoteInput = z.infer<typeof quickNoteSchema>;
+
+export async function createQuickNote(ownerId: string, sessionId: string, rawInput: unknown) {
+  const input = quickNoteSchema.parse(rawInput);
+  const now = new Date().toISOString();
+  return writeQuery(async (tx) => {
+    const sessionResult = await tx.run(
+      `MATCH (session:Session {id: $sessionId, ownerId: $ownerId})
+       WHERE session.status IN ['joining', 'waiting', 'listening', 'ending', 'uncertain']
+       WITH session, session.projectId AS projectId
+       OPTIONAL MATCH (next:ReviewCandidate {sessionId: $sessionId, ownerId: $ownerId})
+       WITH session, projectId, coalesce(max(next.position), -1) + 1 AS position
+       CREATE (candidate:ReviewCandidate {
+         id: $candidateId, ownerId: $ownerId, sessionId: $sessionId, projectId: projectId,
+         position: position, factKind: 'decision', text: $text, ownerName: null,
+         evidenceIds: $evidenceIds, status: 'pending', createdAt: $now,
+         sourceId: $sourceId, factId: $factId
+       })
+       CREATE (session)-[:HAS_REVIEW_CANDIDATE]->(candidate)
+       RETURN candidate.id AS id, candidate.sessionId AS sessionId,
+              candidate.factKind AS factKind, candidate.text AS text,
+              candidate.ownerName AS ownerName, candidate.evidenceIds AS evidenceIds,
+              candidate.status AS status, candidate.sourceId AS sourceId,
+              candidate.factId AS factId, candidate.position AS position`,
+      { ownerId, sessionId, candidateId: randomUUID(), sourceId: randomUUID(), factId: randomUUID(), text: input.text, evidenceIds: input.selectedUtteranceIds, now },
+    );
+    if (!sessionResult.records[0]) throw new ReviewInputError("This meeting is no longer active for quick notes.");
+    const evidenceResult = await tx.run(
+      `MATCH (utterance:Utterance {sessionId: $sessionId})
+       WHERE utterance.id IN $evidenceIds AND coalesce(utterance.isBot, false) = false
+       RETURN count(utterance) AS count`,
+      { sessionId, evidenceIds: input.selectedUtteranceIds },
+    );
+    const matched = number(evidenceResult.records[0]?.get("count"));
+    if (matched !== input.selectedUtteranceIds.length) throw new ReviewInputError("Selected transcript lines do not belong to this meeting.");
+    return candidateFromRecord(sessionResult.records[0]);
+  });
+}
+
 const modelCandidateSchema = z.object({
   factKind: factKindSchema,
   text: z.string().trim().min(1).max(2_000),
@@ -40,6 +83,7 @@ export type ReviewCandidate = ModelCandidate & {
   status: "pending" | "accepted" | "rejected";
   sourceId: string | null;
   factId: string | null;
+  position: number;
 };
 
 export class ReviewInputError extends Error {}
@@ -60,6 +104,7 @@ function candidateFromRecord(record: Neo4jRecord): ReviewCandidate {
     status: z.enum(["pending", "accepted", "rejected"]).parse(string(record, "status")),
     sourceId: record.get("sourceId") ? string(record, "sourceId") : null,
     factId: record.get("factId") ? string(record, "factId") : null,
+    position: number(record.get("position") ?? 0),
   };
 }
 
@@ -216,10 +261,11 @@ export async function extractMeetingReview(ownerId: string, sessionId: string) {
     if (!content) throw new ReviewGenerationError("DeepSeek returned an empty review.");
     const candidates = parseReviewOutput(content, new Set(lines.map((line) => line.id)));
     const createdAt = new Date().toISOString();
+    const manualOffset = existing.candidates.length;
     return writeQuery(async (tx) => {
       const payload = candidates.map((candidate, position) => ({
         ...candidate,
-        position,
+        position: position + manualOffset,
         id: randomUUID(),
         sourceId: randomUUID(),
         factId: randomUUID(),
@@ -247,7 +293,9 @@ export async function extractMeetingReview(ownerId: string, sessionId: string) {
         { ownerId, sessionId, token, candidates: payload, createdAt },
       );
       if (candidates.length && !result.records.length) throw new ReviewConflictError("Meeting memory review state changed.");
-      return result.records.map(candidateFromRecord);
+      const stored = [...existing.candidates, ...result.records.map(candidateFromRecord)];
+      stored.sort((a, b) => a.position - b.position);
+      return stored;
     });
   } catch (error) {
     await writeQuery(async (tx) => {
@@ -276,7 +324,7 @@ async function acceptCandidate(ownerId: string, candidateId: string, input: z.in
               candidate.factKind AS factKind, candidate.text AS text,
               candidate.ownerName AS ownerName, candidate.evidenceIds AS evidenceIds,
               candidate.status AS status, candidate.sourceId AS sourceId,
-              candidate.factId AS factId, project.id AS projectId,
+              candidate.factId AS factId, candidate.position AS position, project.id AS projectId,
               session.updatedAt AS occurredAt`,
       { ownerId, candidateId },
     );
@@ -344,7 +392,7 @@ async function acceptCandidate(ownerId: string, candidateId: string, input: z.in
        RETURN candidate.id AS id, candidate.sessionId AS sessionId,
               candidate.factKind AS factKind, candidate.text AS text,
               candidate.ownerName AS ownerName, candidate.evidenceIds AS evidenceIds,
-              candidate.status AS status, candidate.sourceId AS sourceId, candidate.factId AS factId`,
+              candidate.status AS status, candidate.sourceId AS sourceId, candidate.factId AS factId, candidate.position AS position`,
       { ownerId, candidateId },
     );
     return candidateFromRecord(updated.records[0]);
@@ -366,7 +414,7 @@ export async function updateReviewCandidate(ownerId: string, candidateId: string
          RETURN candidate.id AS id, candidate.sessionId AS sessionId,
                 candidate.factKind AS factKind, candidate.text AS text,
                 candidate.ownerName AS ownerName, candidate.evidenceIds AS evidenceIds,
-                candidate.status AS status, candidate.sourceId AS sourceId, candidate.factId AS factId`,
+                candidate.status AS status, candidate.sourceId AS sourceId, candidate.factId AS factId, candidate.position AS position`,
         { ownerId, candidateId, ...input, ownerName: input.ownerName || null, now: new Date().toISOString() },
       )
       : await tx.run(
@@ -378,7 +426,7 @@ export async function updateReviewCandidate(ownerId: string, candidateId: string
          RETURN candidate.id AS id, candidate.sessionId AS sessionId,
                 candidate.factKind AS factKind, candidate.text AS text,
                 candidate.ownerName AS ownerName, candidate.evidenceIds AS evidenceIds,
-                candidate.status AS status, candidate.sourceId AS sourceId, candidate.factId AS factId`,
+                candidate.status AS status, candidate.sourceId AS sourceId, candidate.factId AS factId, candidate.position AS position`,
         { ownerId, candidateId, now: new Date().toISOString() },
       );
     if (!result.records[0]) throw new ReviewConflictError("Only pending candidates can be changed.");

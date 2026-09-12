@@ -170,15 +170,15 @@ test("operator can save an approved memory note", async ({ page }) => {
   await page.getByRole("button", { name: "Add to memory" }).click();
   const response = await responsePromise;
   expect(response.status()).toBe(201);
-  const source = await response.json() as { id: string };
   await expect(page.getByRole("status")).toContainText("Note added");
   await expect(page.getByText(title)).toBeVisible();
-  try {
-    expect(errors).toEqual([]);
-  } finally {
-    const deleted = await page.request.delete("/api/memory", { data: { kind: "source", id: source.id } });
-    expect(deleted.ok()).toBe(true);
-  }
+
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.locator(".saved-note", { hasText: title }).getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByRole("status")).toContainText("Note deleted");
+  await expect(page.getByText(title)).toHaveCount(0);
+  expect((await page.request.get("/api/memory")).ok()).toBe(true);
+  expect(errors).toEqual([]);
 });
 
 test("meeting draft edits, stale protection, and end state survive polling", async ({ page }) => {
@@ -270,6 +270,37 @@ test("ended meeting review saves curated memory", async ({ page }) => {
     expect(errors).toEqual([]);
   } finally {
     await deleteReviewSession(driver, fixture);
+    await driver.close();
+  }
+});
+
+test("quick note captures during the meeting and surfaces in review", async ({ page }) => {
+  const errors = watchErrors(page);
+  const driver = databaseDriver();
+  const fixture = await withSession(driver);
+  try {
+    await login(page);
+    await page.goto(`/meeting/${fixture.sessionId}`);
+    const noteBox = page.getByLabel("Quick note saved for review after the meeting");
+    await expect(noteBox).toBeVisible();
+    await page.getByText("Can the public launch happen Friday?").click();
+    await noteBox.fill("Alex asked about the Friday launch.");
+    await page.getByRole("button", { name: "Capture" }).click();
+    await expect(page.getByRole("status")).toContainText("Note captured with 1 selected line");
+    await expect(noteBox).toHaveValue("");
+
+    await page.getByRole("button", { name: "End session" }).click();
+    await expect(page.getByText("ended", { exact: true })).toBeVisible();
+    await page.getByRole("link", { name: "Review meeting memory" }).click();
+    await expect(page.getByRole("heading", { name: "What should MyDuo remember?" })).toBeVisible();
+    const memoryBox = page.getByRole("textbox", { name: "Memory", exact: true });
+    await expect(memoryBox.first()).toHaveValue("Alex asked about the Friday launch.");
+    await page.getByLabel("Save this memory").first().check();
+    await page.getByRole("button", { name: "Save accepted" }).click();
+    await expect(page.getByRole("status")).toContainText("1 memory item saved.");
+    expect(errors).toEqual([]);
+  } finally {
+    await deleteSession(driver, fixture.sessionId);
     await driver.close();
   }
 });

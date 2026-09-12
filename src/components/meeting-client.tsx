@@ -30,11 +30,12 @@ export function MeetingClient({ sessionId }: { sessionId: string }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [mode, setMode] = useState<Mode>("answer");
   const [draftEdit, setDraftEdit] = useState<{ suggestionId: string; text: string } | null>(null);
-  const [busy, setBusy] = useState<"suggest" | "save" | "speak" | "stop" | "end" | null>(null);
+  const [busy, setBusy] = useState<"suggest" | "save" | "speak" | "stop" | "end" | "note" | null>(null);
   const [autoState, setAutoState] = useState<AutoSuggestionState | null>(null);
   const [autoBusy, setAutoBusy] = useState(false);
   const [pairing, setPairing] = useState<{ code: string; expiresAt: string } | null>(null);
   const [pairingBusy, setPairingBusy] = useState(false);
+  const [quickNote, setQuickNote] = useState("");
   const [message, setMessage] = useState("");
   const autoAttemptedRevision = useRef(0);
 
@@ -157,6 +158,26 @@ export function MeetingClient({ sessionId }: { sessionId: string }) {
     }
   }
 
+  async function saveQuickNote(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!quickNote.trim()) return;
+    setBusy("note");
+    setMessage("");
+    try {
+      await api(`/api/sessions/${sessionId}/quick-notes`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: quickNote.trim(), selectedUtteranceIds: selected }),
+      });
+      setQuickNote("");
+      setMessage(`Note captured${selected.length ? ` with ${selected.length} selected line${selected.length === 1 ? "" : "s"}` : ""}. Edit it after the meeting.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not capture that note.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function saveEdit() {
     if (!suggestion || draft.trim() === suggestion.text) return;
     setBusy("save");
@@ -259,6 +280,13 @@ export function MeetingClient({ sessionId }: { sessionId: string }) {
               </button>
             ))}
           </div>
+          <form className="quick-note-form" onSubmit={saveQuickNote}>
+            <label htmlFor="quick-note">Quick note <span className="optional">saved for review after the meeting</span></label>
+            <div className="prompt-row">
+              <input id="quick-note" value={quickNote} onChange={(event) => setQuickNote(event.target.value)} maxLength={2000} placeholder={selected.length ? `Will attach ${selected.length} selected line${selected.length === 1 ? "" : "s"} as evidence` : "Jot something to remember…"} />
+              <button className="button button-ink" disabled={busy === "note" || !quickNote.trim()}>{busy === "note" ? "Saving…" : "Capture"}</button>
+            </div>
+          </form>
         </section>
 
         <section className="copilot-panel" aria-labelledby="copilot-heading">
