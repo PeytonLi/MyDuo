@@ -25,7 +25,7 @@ Verified: 2026-09-12 on the local workspace. No secret values are recorded here.
 
 ## Repository checks
 
-The final source passed `pnpm lint`, `pnpm check:core`, and `pnpm build`. Production-mode smoke tests returned HTTP 200 for `/api/health` and HTTP 401 for a protected session request without a login cookie.
+The final source passed `pnpm check:all`: TypeScript, ESLint, nine unit checks, an isolated Neo4j lifecycle, the production build, and eight desktop/mobile browser flows. Three live provider smoke tests also passed. See [QA results](QA-RESULTS.md).
 
 ## Next live gate
 

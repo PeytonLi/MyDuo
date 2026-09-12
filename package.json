@@ -12,8 +12,14 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "check:core": "tsx scripts/check-core.ts && tsx src/lib/server/recall.check.ts",
-    "check": "pnpm typecheck && pnpm lint && pnpm check:core",
+    "test:unit": "tsx --conditions=react-server --test --test-concurrency=1 tests/core.test.ts",
+    "test:integration": "node --env-file=.env.local --conditions=react-server --import tsx --test --test-concurrency=1 tests/database.test.ts",
+    "test:regression": "pnpm test:unit && pnpm test:integration",
+    "test:e2e": "node --env-file=.env.local ./node_modules/@playwright/test/cli.js test",
+    "test:providers": "node --env-file=.env.local --conditions=react-server --import tsx --test --test-concurrency=1 tests/providers.test.ts",
+    "check:all": "pnpm check && pnpm build && pnpm test:e2e",
+    "check:core": "pnpm test:unit",
+    "check": "pnpm typecheck && pnpm lint && pnpm test:regression",
     "setup:local": "node scripts/configure-local.mjs",
     "seed": "tsx scripts/seed.ts"
   },
@@ -23,9 +29,11 @@
     "openai": "7.15.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "server-only": "0.0.1",
     "zod": "4.6.2"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/node": "22.20.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",

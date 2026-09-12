@@ -21,11 +21,12 @@ Open `http://localhost:3000`, sign in with the generated `DEMO_ACCESS_SECRET`, l
 ## Checks
 
 ```bash
-pnpm check
-pnpm build
+pnpm check:all
 ```
 
-The implementation plan, product requirements, integration contracts, [setup results](docs/SETUP-RESULTS.md), and [acceptance results](docs/ACCEPTANCE-RESULTS.md) are in `docs/`.
+This runs type checking, linting, unit regression checks, an isolated Neo4j lifecycle, a production build, and desktop/mobile browser tests. `pnpm test:providers` separately verifies the configured DeepSeek model, ElevenLabs voice, and Recall account because those checks use live provider APIs.
+
+The implementation plan, product requirements, integration contracts, [setup results](docs/SETUP-RESULTS.md), [QA results](docs/QA-RESULTS.md), and [acceptance results](docs/ACCEPTANCE-RESULTS.md) are in `docs/`.
 
 ## Deploy to Render
 
