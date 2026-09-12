@@ -11,7 +11,11 @@ const ACTIVE_STATUSES = ["joining", "waiting", "listening", "ending", "uncertain
 const statusEventSchema = z.object({
   event: z.string().min(1).max(100),
   data: z.object({
-    data: z.object({ code: z.string().optional(), sub_code: z.string().nullable().optional() }).passthrough(),
+    data: z.object({
+      code: z.string().optional(),
+      sub_code: z.string().nullable().optional(),
+      updated_at: z.string().datetime({ offset: true }),
+    }).passthrough(),
     bot: z.object({
       id: z.string().min(1),
       metadata: z.record(z.string(), z.unknown()).default({}),
@@ -231,8 +235,8 @@ async function reserveSession(ownerId: string, meetingUrl: string, requestedProj
 
 export async function createMeeting(ownerId: string, input: { meetingUrl: string; projectId?: string }) {
   const meetingUrl = normalizeMeetingUrl(input.meetingUrl);
-  const reserved = await reserveSession(ownerId, meetingUrl, input.projectId);
   const { appBaseUrl } = recallConfig();
+  const reserved = await reserveSession(ownerId, meetingUrl, input.projectId);
   const transcriptUrl = `${appBaseUrl}/api/webhooks/recall/transcript`;
   const mediaUrl = `${appBaseUrl}/bot/${reserved.sessionId}#bootstrap=${encodeURIComponent(reserved.bootstrapToken)}`;
 
@@ -312,15 +316,15 @@ export function parseStatusEvent(value: unknown) {
 }
 
 export async function applyRecallStatus(eventId: string, value: z.infer<typeof statusEventSchema>) {
-  const status = (() => {
-    if (["bot.joining_call"].includes(value.event)) return "joining";
-    if (["bot.in_waiting_room"].includes(value.event)) return "waiting";
-    if (["bot.in_call_not_recording", "bot.recording_permission_allowed", "bot.in_call_recording"].includes(value.event)) return "listening";
-    if (["bot.call_ended", "bot.done"].includes(value.event)) return "ended";
-    if (["bot.fatal", "bot.recording_permission_denied"].includes(value.event)) return "failed";
+  const providerState = (() => {
+    if (["bot.joining_call"].includes(value.event)) return { status: "joining", rank: 0 };
+    if (["bot.in_waiting_room"].includes(value.event)) return { status: "waiting", rank: 1 };
+    if (["bot.in_call_not_recording", "bot.recording_permission_allowed", "bot.in_call_recording"].includes(value.event)) return { status: "listening", rank: 2 };
+    if (["bot.fatal", "bot.recording_permission_denied"].includes(value.event)) return { status: "failed", rank: 3 };
+    if (["bot.call_ended", "bot.done"].includes(value.event)) return { status: "ended", rank: 4 };
     return null;
   })();
-  if (!status) return { knownSession: false, ignored: true, duplicate: false };
+  if (!providerState) return { knownSession: false, ignored: true, duplicate: false };
 
   const metadataSessionId = value.data.bot.metadata.myduo_session_id;
   const sessionId = typeof metadataSessionId === "string" ? metadataSessionId : "";
@@ -332,17 +336,22 @@ export async function applyRecallStatus(eventId: string, value: z.infer<typeof s
        WHERE s.providerBotId = $botId OR s.id = $sessionId
        MERGE (d:RecallDelivery {id: $eventId})
        ON CREATE SET d.createdAt = $now, d.freshToken = $freshToken
-       WITH s, d, d.freshToken = $freshToken AS fresh
-       FOREACH (_ IN CASE WHEN fresh THEN [1] ELSE [] END |
+       WITH s, d, d.freshToken = $freshToken AS fresh, datetime($providerUpdatedAt) AS providerUpdatedAt
+       WITH s, d, fresh, providerUpdatedAt,
+            fresh AND (s.providerStatusUpdatedAt IS NULL OR providerUpdatedAt > s.providerStatusUpdatedAt
+              OR (providerUpdatedAt = s.providerStatusUpdatedAt AND $statusRank >= coalesce(s.providerStatusRank, -1))) AS apply
+       FOREACH (_ IN CASE WHEN fresh THEN [1] ELSE [] END | SET d.processedAt = $now)
+       FOREACH (_ IN CASE WHEN apply THEN [1] ELSE [] END |
          SET s.providerBotId = coalesce(s.providerBotId, $botId),
              s.status = CASE
                WHEN s.status = 'ended' THEN 'ended'
                WHEN s.status = 'ending' AND NOT $status IN ['ended', 'failed'] THEN s.status
                ELSE $status
              END,
+             s.providerStatusUpdatedAt = providerUpdatedAt,
+             s.providerStatusRank = $statusRank,
              s.errorCode = CASE WHEN $status = 'failed' THEN $errorCode ELSE s.errorCode END,
-             s.updatedAt = $now,
-             d.processedAt = $now
+             s.updatedAt = $now
        )
        REMOVE d.freshToken
        RETURN fresh`,
@@ -351,7 +360,9 @@ export async function applyRecallStatus(eventId: string, value: z.infer<typeof s
         sessionId,
         eventId,
         freshToken,
-        status,
+        status: providerState.status,
+        statusRank: providerState.rank,
+        providerUpdatedAt: value.data.data.updated_at,
         errorCode: value.data.data.code || value.data.data.sub_code || null,
         now,
       },

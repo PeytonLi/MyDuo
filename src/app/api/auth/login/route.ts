@@ -5,6 +5,7 @@ import {
   consumeLoginAttempt,
   createOperatorSession,
   operatorCookie,
+  resetLoginAttempts,
   verifyAccessSecret,
 } from "@/lib/server/auth";
 
@@ -22,6 +23,7 @@ export async function POST(request: Request) {
     if (!verifyAccessSecret(secret)) {
       return NextResponse.json({ code: "INVALID_LOGIN", message: "That access key is not valid.", retryable: false, requestId }, { status: 401 });
     }
+    resetLoginAttempts(key);
     const session = await createOperatorSession();
     const response = NextResponse.json({ ok: true });
     response.cookies.set(operatorCookie(session.token, session.expiresAt));

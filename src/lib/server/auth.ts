@@ -31,6 +31,10 @@ export function consumeLoginAttempt(key: string, now = Date.now()) {
   return true;
 }
 
+export function resetLoginAttempts(key: string) {
+  attempts.delete(key);
+}
+
 export function assertMutationOrigin(request: Request) {
   const origin = request.headers.get("origin");
   if (!origin) return;
