@@ -7,10 +7,10 @@ import { Wordmark } from "./wordmark";
 
 type Mode = AssistanceRequest["mode"];
 
-const modeCopy: Record<Mode, { label: string; prompt: string }> = {
-  answer: { label: "Help me answer", prompt: "What do you want help answering?" },
-  support: { label: "Find context", prompt: "What detail should MyDuo look for?" },
-  clarify: { label: "Suggest a question", prompt: "What feels unclear?" },
+const modeCopy: Record<Mode, string> = {
+  answer: "Help me answer",
+  support: "Find context",
+  clarify: "Suggest a question",
 };
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
@@ -29,7 +29,6 @@ export function MeetingClient({ sessionId }: { sessionId: string }) {
   const [session, setSession] = useState<SessionState | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [mode, setMode] = useState<Mode>("answer");
-  const [question, setQuestion] = useState("");
   const [draftEdit, setDraftEdit] = useState<{ suggestionId: string; text: string } | null>(null);
   const [busy, setBusy] = useState<"suggest" | "save" | "speak" | "stop" | "end" | null>(null);
   const [autoState, setAutoState] = useState<AutoSuggestionState | null>(null);
@@ -114,7 +113,7 @@ export function MeetingClient({ sessionId }: { sessionId: string }) {
       const next = await api<SuggestionDraft>(`/api/sessions/${sessionId}/suggestions`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ mode, selectedUtteranceIds: selected, operatorQuestion: question || undefined, transcriptRevision: session.transcriptRevision }),
+        body: JSON.stringify({ mode, selectedUtteranceIds: selected, transcriptRevision: session.transcriptRevision }),
       });
       setSession((current) => current ? { ...current, currentSuggestion: next } : current);
       setDraftEdit(null);
@@ -279,10 +278,9 @@ export function MeetingClient({ sessionId }: { sessionId: string }) {
 
           <form className="assist-form" onSubmit={generate}>
             <div className="mode-switcher" aria-label="Assistance mode">
-              {(Object.keys(modeCopy) as Mode[]).map((item) => <button type="button" key={item} className={mode === item ? "active" : ""} onClick={() => setMode(item)}>{modeCopy[item].label}</button>)}
+              {(Object.keys(modeCopy) as Mode[]).map((item) => <button type="button" key={item} className={mode === item ? "active" : ""} onClick={() => setMode(item)}>{modeCopy[item]}</button>)}
             </div>
-            <label htmlFor="question">{modeCopy[mode].prompt}</label>
-            <div className="prompt-row"><input id="question" value={question} onChange={(event) => setQuestion(event.target.value)} maxLength={500} placeholder={selected.length ? `${selected.length} transcript line${selected.length === 1 ? "" : "s"} selected` : "Use the latest conversation"} /><button className="button button-ink" disabled={busy === "suggest" || autoBusy || session.status !== "listening"}>{busy === "suggest" ? "Thinking…" : "Draft"}</button></div>
+            <div className="prompt-row"><span className="prompt-basis">{selected.length ? `${selected.length} transcript line${selected.length === 1 ? "" : "s"} selected` : "Using the latest conversation"}</span><button className="button button-ink" disabled={busy === "suggest" || autoBusy || session.status !== "listening"}>{busy === "suggest" ? "Thinking…" : "Draft"}</button></div>
           </form>
 
           {suggestion ? (
@@ -306,7 +304,7 @@ export function MeetingClient({ sessionId }: { sessionId: string }) {
               </div>
             </article>
           ) : (
-            <div className="copilot-empty"><span aria-hidden="true">✦</span><h3>Your draft will appear here</h3><p>Pick a mode, add a thought if useful, and let MyDuo combine it with the meeting and your confirmed notes.</p></div>
+            <div className="copilot-empty"><span aria-hidden="true">✦</span><h3>Your draft will appear here</h3><p>Pick a mode, select a transcript line for precision, and let MyDuo combine the meeting with your confirmed notes.</p></div>
           )}
 
           {session.activeSpeech && <div className="speech-bar"><div><span className="sound-wave small" aria-hidden="true"><i /><i /><i /><i /></span><p><strong>{session.activeSpeech.status}</strong><span>{session.activeSpeech.approvedText}</span></p></div><button className="button button-stop" onClick={stopSpeaking} disabled={busy === "stop"}>{busy === "stop" ? "Stopping…" : "Stop speaking"}</button></div>}

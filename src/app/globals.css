@@ -163,6 +163,7 @@ textarea { line-height: 1.55; resize: vertical; }
 .mode-switcher button { background: transparent; border: 1px solid var(--line); border-radius: 99px; font-size: 0.67rem; font-weight: 750; padding: 9px 8px; }
 .mode-switcher button.active { background: var(--ink); border-color: var(--ink); color: white; }
 .prompt-row { display: grid; gap: 8px; grid-template-columns: 1fr auto; }
+.prompt-basis { align-self: center; color: var(--ink-soft); font-size: .78rem; }
 .suggestion-card { border-left: 3px solid var(--signal); margin-top: 28px; padding-left: 24px; }
 .suggestion-meta { align-items: center; color: var(--ink-soft); display: flex; font-size: .65rem; font-weight: 800; justify-content: space-between; letter-spacing: .12em; text-transform: uppercase; }
 .draft-text { background: transparent; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; font-family: var(--serif); font-size: clamp(1.4rem, 2.2vw, 2rem); line-height: 1.36; padding: 6px 0 16px; }

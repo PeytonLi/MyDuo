@@ -24,7 +24,6 @@ export function MeetAddonClient({ cloudProjectNumber }: { cloudProjectNumber: st
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [session, setSession] = useState<SessionState | null>(null);
   const [mode, setMode] = useState<Mode>("clarify");
-  const [question, setQuestion] = useState("");
   const [draftEdit, setDraftEdit] = useState<{ suggestionId: string; text: string } | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -87,7 +86,7 @@ export function MeetAddonClient({ cloudProjectNumber }: { cloudProjectNumber: st
       const suggestion = await api<SuggestionDraft>(`/api/sessions/${sessionId}/suggestions`, token, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, selectedUtteranceIds: [], operatorQuestion: question || undefined, transcriptRevision: session.transcriptRevision }),
+        body: JSON.stringify({ mode, selectedUtteranceIds: [], transcriptRevision: session.transcriptRevision }),
       });
       setSession({ ...session, currentSuggestion: suggestion });
       setDraftEdit(null);
@@ -187,8 +186,6 @@ export function MeetAddonClient({ cloudProjectNumber }: { cloudProjectNumber: st
         <select id="addon-mode" value={mode} onChange={(event) => setMode(event.target.value as Mode)}>
           <option value="answer">Answer</option><option value="support">Find context</option><option value="clarify">Ask a question</option>
         </select>
-        <label htmlFor="addon-question">What do you need?</label>
-        <input id="addon-question" value={question} onChange={(event) => setQuestion(event.target.value)} maxLength={500} />
         <button disabled={busy || session.status !== "listening"}>{busy ? "Working…" : "Draft privately"}</button>
       </form>
       {suggestion && <div className={styles.draft}>
