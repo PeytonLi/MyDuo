@@ -20,6 +20,28 @@ const ids = {
   elena: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
   mayaResponsibility: "ffffffff-ffff-4fff-8fff-ffffffffffff",
   elenaResponsibility: "12121212-1212-4121-8121-121212121212",
+  northstarReviewPlan: "13131313-1313-4131-8131-131313131313",
+  northstarVendorPlan: "14141414-1414-4141-8141-141414141414",
+  northstarDeliveryPlan: "15151515-1515-4151-8151-151515151515",
+  northstarRiskLog: "16161616-1616-4161-8161-161616161616",
+  priya: "17171717-1717-4171-8171-171717171717",
+  simone: "18181818-1818-4181-8181-181818181818",
+  lucas: "19191919-1919-4191-8191-191919191919",
+  theo: "20202020-2020-4020-8020-202020202020",
+  executiveReview: "21212121-2121-4121-8121-212121212121",
+  feedbackRound: "23232323-2323-4232-8232-232323232323",
+  pictureLock: "24242424-2424-4242-8242-242424242424",
+  soundMix: "25252525-2525-4252-8252-252525252525",
+  purchaseOrder: "26262626-2626-4262-8262-262626262626",
+  simoneResponsibility: "27272727-2727-4272-8272-272727272727",
+  deliveryPackage: "28282828-2828-4282-8282-282828282828",
+  accessibilityQc: "29292929-2929-4292-8292-292929292929",
+  lucasResponsibility: "30303030-3030-4030-8030-303030303030",
+  venuePlayback: "31313131-3131-4131-8131-313131313131",
+  theoResponsibility: "32323232-3232-4232-8232-323232323232",
+  musicLicense: "34343434-3434-4343-8343-343434343434",
+  productCapture: "35353535-3535-4353-8353-353535353535",
+  priyaResponsibility: "36363636-3636-4363-8363-363636363636",
 };
 
 const constraints = [
@@ -177,6 +199,134 @@ async function seed() {
           mayaResponsibilityId: ids.mayaResponsibility,
           elenaResponsibilityId: ids.elenaResponsibility,
           now,
+        },
+      );
+    });
+    await writeQuery(async (tx) => {
+      await tx.run(
+        `MATCH (project:Project {id: $projectId, ownerId: $ownerId})
+         UNWIND $sources AS item
+         MERGE (source:Source {id: item.id})
+         SET source.ownerId = $ownerId, source.projectId = $projectId,
+             source.title = item.title, source.text = item.text,
+             source.createdAt = $now, source.occurredAt = $now, source.allowMeetingUse = true
+         MERGE (project)-[:HAS_SOURCE]->(source)
+         WITH DISTINCT project
+         UNWIND $people AS item
+         MERGE (person:Person {id: item.id})
+         SET person.ownerId = $ownerId, person.name = item.name, person.nameKey = toLower(item.name)
+         WITH DISTINCT project
+         UNWIND $facts AS item
+         MERGE (fact:Fact {id: item.id})
+         SET fact.ownerId = $ownerId, fact.projectId = $projectId,
+             fact.kind = item.kind, fact.text = item.text,
+             fact.status = 'confirmed', fact.confirmedAt = $now
+         MERGE (project)-[:HAS_FACT]->(fact)
+         WITH DISTINCT project
+         UNWIND $supports AS link
+         MATCH (fact:Fact {id: link.factId, projectId: $projectId})
+         MATCH (source:Source {id: link.sourceId, projectId: $projectId})
+         MERGE (fact)-[:SUPPORTED_BY]->(source)
+         WITH DISTINCT project
+         UNWIND $owners AS link
+         MATCH (fact:Fact {id: link.factId, projectId: $projectId})
+         MATCH (person:Person {id: link.personId, ownerId: $ownerId})
+         MERGE (fact)-[:OWNED_BY]->(person)
+         WITH DISTINCT project
+         UNWIND $dependencies AS link
+         MATCH (fact:Fact {id: link.factId, projectId: $projectId})
+         MATCH (dependency:Fact {id: link.dependencyId, projectId: $projectId})
+         MERGE (fact)-[:DEPENDS_ON]->(dependency)`,
+        {
+          ownerId: ids.owner,
+          projectId: ids.northstarProject,
+          now,
+          sources: [
+            {
+              id: ids.northstarReviewPlan,
+              title: "Executive review plan",
+              text: "Priya Shah consolidates leadership feedback for the Northstar keynote video. The CEO review is October 7, 2026 at 11:00 AM Pacific, comments are due in Frame.io by 1:00 PM, and picture lock is 5:00 PM that day. The budget includes one consolidated revision round; late copy changes move to the backup version.",
+            },
+            {
+              id: ids.northstarVendorPlan,
+              title: "Post-production vendor and budget",
+              text: "Lighthouse Post quoted $8,400 under purchase order NS-204 for color, sound mix, and one revision. Simone Brooks must release the purchase order by September 30. The studio slot is October 8 at 9:00 AM Pacific; missing it moves the mix to October 12 and puts the event handoff at risk.",
+            },
+            {
+              id: ids.northstarDeliveryPlan,
+              title: "Event delivery specification",
+              text: "Lucas Park will package a 4K ProRes 422 HQ master, a 1080p H.264 backup, a 48 kHz WAV split, and WebVTT captions. Accessibility and technical QC are due October 9 at noon Pacific. Theo Martin will run the LED-wall playback test at Harbor Convention Center on October 10 at 3:00 PM. Delivery uses an encrypted SSD with a checksum manifest.",
+            },
+            {
+              id: ids.northstarRiskLog,
+              title: "Northstar production risk log",
+              text: "The Forward Motion music license must clear by October 3. The approved product UI capture from build 6.4 is due October 2. The customer quote, product capture, purchase order, and fixed post-production slot are the four schedule risks. The no-quote backup cut protects the event date if legal approval slips.",
+            },
+          ],
+          people: [
+            { id: ids.priya, name: "Priya Shah" },
+            { id: ids.simone, name: "Simone Brooks" },
+            { id: ids.lucas, name: "Lucas Park" },
+            { id: ids.theo, name: "Theo Martin" },
+          ],
+          facts: [
+            { id: ids.executiveReview, kind: "deadline", text: "The CEO review is October 7, 2026 at 11:00 AM Pacific, with consolidated comments due by 1:00 PM." },
+            { id: ids.feedbackRound, kind: "decision", text: "The production budget includes one consolidated leadership revision round." },
+            { id: ids.pictureLock, kind: "deadline", text: "Picture lock is October 7, 2026 at 5:00 PM Pacific." },
+            { id: ids.soundMix, kind: "dependency", text: "Lighthouse Post is reserved for color and sound mix on October 8, 2026 at 9:00 AM Pacific." },
+            { id: ids.purchaseOrder, kind: "dependency", text: "Purchase order NS-204 for $8,400 must be released by September 30 to hold the post-production slot." },
+            { id: ids.simoneResponsibility, kind: "responsibility", text: "Simone Brooks owns release of purchase order NS-204." },
+            { id: ids.deliveryPackage, kind: "decision", text: "The event package includes a 4K ProRes master, 1080p H.264 backup, 48 kHz WAV split, WebVTT captions, and a checksum manifest." },
+            { id: ids.accessibilityQc, kind: "deadline", text: "Accessibility review and technical quality control are due October 9, 2026 at noon Pacific." },
+            { id: ids.lucasResponsibility, kind: "responsibility", text: "Lucas Park owns final packaging, captions, accessibility review, and checksum verification." },
+            { id: ids.venuePlayback, kind: "deadline", text: "The LED-wall playback test is October 10, 2026 at 3:00 PM at Harbor Convention Center." },
+            { id: ids.theoResponsibility, kind: "responsibility", text: "Theo Martin owns venue playback testing and event-team acceptance." },
+            { id: ids.musicLicense, kind: "dependency", text: "The Forward Motion music license must clear by October 3, 2026." },
+            { id: ids.productCapture, kind: "dependency", text: "The approved product UI capture from build 6.4 is due October 2, 2026." },
+            { id: ids.priyaResponsibility, kind: "responsibility", text: "Priya Shah owns consolidated leadership feedback and the picture-lock decision." },
+          ],
+          supports: [
+            { factId: ids.executiveReview, sourceId: ids.northstarReviewPlan },
+            { factId: ids.feedbackRound, sourceId: ids.northstarReviewPlan },
+            { factId: ids.pictureLock, sourceId: ids.northstarReviewPlan },
+            { factId: ids.priyaResponsibility, sourceId: ids.northstarReviewPlan },
+            { factId: ids.soundMix, sourceId: ids.northstarVendorPlan },
+            { factId: ids.purchaseOrder, sourceId: ids.northstarVendorPlan },
+            { factId: ids.simoneResponsibility, sourceId: ids.northstarVendorPlan },
+            { factId: ids.deliveryPackage, sourceId: ids.northstarDeliveryPlan },
+            { factId: ids.accessibilityQc, sourceId: ids.northstarDeliveryPlan },
+            { factId: ids.lucasResponsibility, sourceId: ids.northstarDeliveryPlan },
+            { factId: ids.venuePlayback, sourceId: ids.northstarDeliveryPlan },
+            { factId: ids.theoResponsibility, sourceId: ids.northstarDeliveryPlan },
+            { factId: ids.musicLicense, sourceId: ids.northstarRiskLog },
+            { factId: ids.productCapture, sourceId: ids.northstarRiskLog },
+            { factId: ids.northstarFallback, sourceId: ids.northstarRiskLog },
+          ],
+          owners: [
+            { factId: ids.executiveReview, personId: ids.priya },
+            { factId: ids.feedbackRound, personId: ids.priya },
+            { factId: ids.pictureLock, personId: ids.priya },
+            { factId: ids.priyaResponsibility, personId: ids.priya },
+            { factId: ids.purchaseOrder, personId: ids.simone },
+            { factId: ids.simoneResponsibility, personId: ids.simone },
+            { factId: ids.accessibilityQc, personId: ids.lucas },
+            { factId: ids.deliveryPackage, personId: ids.lucas },
+            { factId: ids.lucasResponsibility, personId: ids.lucas },
+            { factId: ids.venuePlayback, personId: ids.theo },
+            { factId: ids.theoResponsibility, personId: ids.theo },
+          ],
+          dependencies: [
+            { factId: ids.pictureLock, dependencyId: ids.executiveReview },
+            { factId: ids.pictureLock, dependencyId: ids.northstarLegal },
+            { factId: ids.pictureLock, dependencyId: ids.productCapture },
+            { factId: ids.soundMix, dependencyId: ids.pictureLock },
+            { factId: ids.soundMix, dependencyId: ids.purchaseOrder },
+            { factId: ids.soundMix, dependencyId: ids.musicLicense },
+            { factId: ids.northstarDeadline, dependencyId: ids.soundMix },
+            { factId: ids.accessibilityQc, dependencyId: ids.northstarDeadline },
+            { factId: ids.venuePlayback, dependencyId: ids.accessibilityQc },
+            { factId: ids.venuePlayback, dependencyId: ids.northstarDeadline },
+          ],
         },
       );
     });
