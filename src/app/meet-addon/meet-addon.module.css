@@ -2,7 +2,9 @@
 .pairing, .panel { display: grid; gap: 14px; margin: 0 auto; max-width: 420px; }
 .pairing h1 { font-family: Georgia, serif; font-size: 2rem; line-height: 1; margin: 10px 0 0; }
 .pairing p { color: #59584f; line-height: 1.5; margin: 0; }
-.pairing form, .composer { display: grid; gap: 8px; }
+.pairing form, .composer, .noteForm { display: grid; gap: 8px; }
+.noteForm label span { color: #66645b; font-weight: 500; }
+.noteForm button { justify-self: start; padding: 9px 14px; }
 .pairing input { font-size: 1.4rem; letter-spacing: .18em; text-transform: uppercase; }
 .shell input, .shell select, .shell textarea { background: #fffdf7; border: 1px solid #b7b3a8; border-radius: 8px; color: inherit; padding: 11px; width: 100%; }
 .shell button { background: #1d1d18; border: 0; border-radius: 999px; color: white; cursor: pointer; font-weight: 700; padding: 11px 16px; }

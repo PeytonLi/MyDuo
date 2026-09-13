@@ -25,6 +25,7 @@ export function MeetAddonClient({ cloudProjectNumber }: { cloudProjectNumber: st
   const [session, setSession] = useState<SessionState | null>(null);
   const [mode, setMode] = useState<Mode>("clarify");
   const [draftEdit, setDraftEdit] = useState<{ suggestionId: string; text: string } | null>(null);
+  const [quickNote, setQuickNote] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -92,6 +93,26 @@ export function MeetAddonClient({ cloudProjectNumber }: { cloudProjectNumber: st
       setDraftEdit(null);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Drafting failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function captureNote(event: FormEvent) {
+    event.preventDefault();
+    if (!token || !sessionId || !quickNote.trim()) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      await api(`/api/sessions/${sessionId}/quick-notes`, token, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: quickNote.trim(), selectedUtteranceIds: [] }),
+      });
+      setQuickNote("");
+      setMessage("Note captured. Edit it after the meeting.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not capture that note.");
     } finally {
       setBusy(false);
     }
@@ -181,6 +202,11 @@ export function MeetAddonClient({ cloudProjectNumber }: { cloudProjectNumber: st
       <div className={styles.transcript} aria-live="polite">
         {session.recentUtterances.slice(-8).map((turn) => <p key={turn.id}><strong>{turn.speakerName}</strong>{turn.text}</p>)}
       </div>
+      <form onSubmit={captureNote} className={styles.noteForm}>
+        <label htmlFor="addon-note">Quick note <span>saved for review after the meeting</span></label>
+        <input id="addon-note" value={quickNote} onChange={(event) => setQuickNote(event.target.value)} maxLength={2000} placeholder="Jot something to remember…" />
+        <button disabled={busy || !quickNote.trim()}>{busy ? "Saving…" : "Capture"}</button>
+      </form>
       <form onSubmit={generate} className={styles.composer}>
         <label htmlFor="addon-mode">Help me</label>
         <select id="addon-mode" value={mode} onChange={(event) => setMode(event.target.value as Mode)}>

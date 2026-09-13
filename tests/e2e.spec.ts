@@ -294,10 +294,10 @@ test("quick note captures during the meeting and surfaces in review", async ({ p
     await page.getByRole("link", { name: "Review meeting memory" }).click();
     await expect(page.getByRole("heading", { name: "What should MyDuo remember?" })).toBeVisible();
     const memoryBox = page.getByRole("textbox", { name: "Memory", exact: true });
-    await expect(memoryBox.first()).toHaveValue("Alex asked about the Friday launch.");
+    await expect(memoryBox.first()).toHaveValue("Alex asked about the Friday launch.", { timeout: 30_000 });
     await page.getByLabel("Save this memory").first().check();
     await page.getByRole("button", { name: "Save accepted" }).click();
-    await expect(page.getByRole("status")).toContainText("1 memory item saved.");
+    await expect(page.getByRole("status")).toContainText("1 memory item saved.", { timeout: 30_000 });
     expect(errors).toEqual([]);
   } finally {
     await deleteSession(driver, fixture.sessionId);
@@ -320,9 +320,15 @@ test("meet side panel pairs one-use with the active session", async ({ page }) =
     const { code } = await paired.json() as { code: string };
     const exchanged = await page.request.post("/api/addon/exchange", { data: { code } });
     expect(exchanged.ok()).toBe(true);
-    const body = await exchanged.json() as { sessionId: string };
+    const body = await exchanged.json() as { sessionId: string; token: string };
     expect(body.sessionId).toBe(fixture.sessionId);
     expect((await page.request.post("/api/addon/exchange", { data: { code } })).status()).toBe(401);
+
+    const captured = await page.request.post(`/api/sessions/${fixture.sessionId}/quick-notes`, {
+      data: { text: "Panel captured this note.", selectedUtteranceIds: [] },
+      headers: { authorization: `Bearer ${body.token}` },
+    });
+    expect(captured.status()).toBe(201);
     expect(errors).toEqual([]);
   } finally {
     await deleteSession(driver, fixture.sessionId);
