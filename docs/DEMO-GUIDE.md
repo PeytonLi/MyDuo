@@ -1,14 +1,14 @@
 # MyDuo hackathon demo
 
-Demo MyDuo as a private meeting copilot for a fictional production team delivering the **Northstar Summit keynote video**. The seeded project contains six source documents, twenty confirmed facts, six people, and connected ownership and dependency relationships.
+Demo MyDuo as a private meeting copilot for a fictional production team delivering the **Northstar Summit keynote video**. The seeded project contains seven source documents, twenty-one confirmed facts, and connected ownership and dependency relationships.
 
-The core story is simple: MyDuo hears a question, combines the selected transcript with confirmed Neo4j memory, privately drafts an answer, and speaks only after the operator approves the exact words.
+The core story is simple: MyDuo hears a question, follows the Neo4j graph to gather evidence, privately drafts an answer with its full reasoning path visible, and speaks only after the operator approves the exact words — waiting for a clear moment on the call.
 
 ## Before the demo
 
 1. Run `pnpm seed` to restore the Northstar data.
 2. Open the deployed MyDuo workspace and select **Northstar Summit keynote video**.
-3. Open Neo4j Query in another tab with both queries below ready to run.
+3. Open Neo4j Query in another tab with the queries below ready to run.
 4. Start a short Meet or Zoom call with one teammate and admit the visible MyDuo bot.
 5. Keep **Auto-suggest questions** off until the manual flow succeeds.
 
@@ -28,7 +28,7 @@ RETURN project, fact, source, owner, dependency
 
 Say:
 
-> This is the team's working memory. Neo4j connects the deliverable to source notes, confirmed decisions, owners, deadlines, and dependencies. MyDuo can follow those relationships instead of searching one large transcript.
+> This is the team's working memory. Neo4j connects the deliverable to source notes, confirmed decisions, owners, deadlines, and dependencies. MyDuo does not search one large transcript — it calls fixed tools that traverse this graph, and it shows me the exact path it used.
 
 Then show the critical path:
 
@@ -39,9 +39,9 @@ RETURN path
 
 The handoff connects to sound mix, picture lock, the purchase order, music licensing, product capture, legal approval, and executive review.
 
-## Five-minute live script
+## Six-minute live script
 
-### 1. Answer from project memory
+### 1. Watch the graph answer a dependency question
 
 Ask your teammate to say:
 
@@ -52,17 +52,18 @@ When the sentence appears in the transcript:
 1. Select that transcript line.
 2. Choose **Help me answer**.
 3. Select **Draft**.
-4. Open the evidence beneath the private draft.
 
-There is no instruction box. The selected transcript line identifies what MyDuo should answer, and the selected mode determines the kind of contribution. If nothing is selected, MyDuo uses the latest relevant conversation.
+There is no instruction box. The selected transcript line identifies what MyDuo should answer. DeepSeek decides for itself whether to call the fixed graph tools — project search, dependency tracing, conflict lookup, or owner and deadline lookup — and the draft it returns is grounded in what those tools found.
 
-A good draft should mention that the handoff depends on Elena Ruiz's October 6 legal approval, Maya Chen owns the edit, and the team can use the backup cut without the quote.
+Open **Technical trace** beneath the draft. It shows the tool calls it made, the Neo4j evidence path (fact → owner, fact → source, fact → dependency), the model, retrieval and generation timing, and token usage including cache hits.
 
 Say:
 
-> The answer came from the live question and the connected project memory. I can inspect its sources, edit the words, or dismiss it. Nothing reaches the call until I press Speak.
+> Every claim maps to a fact in the graph, and I can see the exact hops the model took to reach it. The model cannot write its own database queries — it picks from four fixed, validated tools.
 
-Make one small edit, choose **Save edit**, then choose **Speak to meeting**.
+A good draft should mention that the handoff depends on Elena Ruiz's October 6 legal approval, Maya Chen owns the edit, and the team can use the backup cut without the quote.
+
+Make one small edit, choose **Save edit**, then choose **Speak to meeting**. If your teammate is still talking, the panel shows **Waiting for a clear moment…** — MyDuo will not talk over a participant. Approve while the floor is quiet and the response streams in.
 
 ### 2. Find a precise project detail
 
@@ -70,9 +71,7 @@ Deselect the first transcript line by selecting it again. Ask your teammate to s
 
 > Before we finish, what files does the events team need, and who owns the delivery package?
 
-Select that new line, choose **Find context**, and choose **Draft**. The response should identify Lucas Park and the 4K ProRes master, 1080p backup, WAV split, WebVTT captions, and checksum manifest.
-
-This demonstrates that the same graph can answer a schedule question and then traverse to a different owner and deliverable without loading a new document.
+Select that new line, choose **Find context**, and choose **Draft**. The response should identify Lucas Park and the 4K ProRes master, 1080p backup, WAV split, WebVTT captions, and checksum manifest. Open **Technical trace** again to show a different tool path answering a different question from the same graph.
 
 ### 3. Turn ambiguity into a useful question
 
@@ -86,11 +85,15 @@ Have the teammate answer:
 
 > Elena will confirm by October 6 at 10:00 AM, two hours before the cutoff.
 
-### 4. Capture memory without interrupting the call
+### 4. Capture a date change without interrupting the call
 
-Keep the teammate's commitment selected. In **Quick note**, enter:
+Ask your teammate to say:
 
-`Elena committed to confirm legal approval by October 6 at 10:00 AM.`
+> Also, heads up — the final video deadline moved from October 8 to October 9 at 2:00 PM.
+
+Select that line. In **Quick note**, enter:
+
+`The final video is due October 9, 2026 at 2:00 PM Pacific.`
 
 Choose **Capture**.
 
@@ -98,15 +101,35 @@ Say:
 
 > This note is separate from speech. It is held as a pending memory candidate, with the selected transcript attached as evidence. It cannot affect a future meeting until I review and accept it.
 
-### 5. Grow the graph
+### 5. Review, resolve the conflict, supersede the old fact
 
-End the meeting and choose **Review meeting memory**. Find the captured commitment, confirm its type and wording, select **Save this memory**, and choose **Save accepted**.
+End the meeting and choose **Review meeting memory**. Find the captured date change and set its type to **Deadline**.
 
-Run the Neo4j overview query again. The accepted fact and its supporting meeting source now appear in the Northstar graph.
+Choose **Save accepted**. MyDuo detects that the new deadline conflicts with the active **October 8** fact and lists both side by side with their active-since dates.
+
+Check the older fact and choose **Replace selected**.
 
 Say:
 
-> The graph changed only after human review. The next meeting can use this confirmed commitment, along with the transcript evidence that supports it.
+> MyDuo will not silently keep two contradictory deadlines. It closes the old fact, links the new one with SUPERSEDES and CONTRADICTS, and keeps the full history — the old fact is excluded from future retrieval but never deleted.
+
+Run this in Neo4j:
+
+```cypher
+MATCH (new:Fact)-[:SUPERSEDES]->(old:Fact)
+OPTIONAL MATCH (new)-[:SUPPORTED_BY]->(source:Source)
+RETURN new, old, source
+```
+
+The replacement fact, the closed October 8 fact, and the meeting transcript that justified the change all appear. The next meeting that asks about the handoff will answer from the new date.
+
+### 6. Show measured behavior
+
+Return to the home page. The **Technical evidence** panel shows measured metrics from the drafts just generated: the share of grounded drafts, average graph hops per draft, approval rate, median draft time, and median approval-to-voice latency.
+
+Say:
+
+> These are not claims — they are recorded measurements from the traces of the drafts you just watched.
 
 ## What each control means
 
@@ -118,9 +141,10 @@ Say:
 | Suggest a question | Draft a concise clarification question. |
 | Draft | Generate a private contribution. It does not speak. |
 | Save edit | Store the operator's revised wording as a new draft version. |
-| Speak to meeting | Send only the reviewed text to ElevenLabs and the meeting. |
+| Speak to meeting | Send only the reviewed text to ElevenLabs and the meeting, once the floor is clear. |
+| Technical trace | The graph tools used, evidence path, model, timings, and token usage behind the draft. |
 | Quick note | Save a pending memory candidate for post-meeting review. It does not steer speech. |
-| Auto-suggest questions | Privately offer occasional clarification questions. It never speaks automatically. |
+| Auto-suggest questions | Privately offer a draft when the meeting raises a question, risk, or date change. It explains why it appeared and never speaks automatically. |
 
 ## Backup questions
 
@@ -135,7 +159,9 @@ Say:
 ## Demo safeguards
 
 - Keep the approved spoken response to one or two sentences.
-- Keep Neo4j Query open with the visualization query ready.
+- Keep Neo4j Query open with the visualization and SUPERSEDES queries ready.
 - Deselect old transcript lines before demonstrating a different request.
+- If the teammate is talking when you approve speech, point at **Waiting for a clear moment…** — that delay is the feature, not a failure.
 - Rehearse Stop while speech is playing and confirm the other participant hears it stop.
+- If DeepSeek does not call graph tools for a simple question, say the tools are optional and show the trace drawer on a dependency question instead.
 - Use the deployed companion window unless the Meet side panel has been installed and tested.

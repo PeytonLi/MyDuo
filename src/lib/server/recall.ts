@@ -132,7 +132,11 @@ export async function createRecallBot(sessionId: string, meetingUrl: string, tra
         transcript: {
           provider: { elevenlabs_streaming: { model_id: "scribe_v2_realtime" } },
         },
-        realtime_endpoints: [{ type: "webhook", url: transcriptUrl, events: ["transcript.data"] }],
+        realtime_endpoints: [{
+          type: "webhook",
+          url: transcriptUrl,
+          events: ["transcript.data", "participant_events.speech_on", "participant_events.speech_off"],
+        }],
       },
       output_media: {
         camera: { kind: "webpage", config: { url: mediaUrl } },

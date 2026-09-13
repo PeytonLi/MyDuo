@@ -148,9 +148,14 @@ export async function getSessionState(ownerId: string, sessionId: string): Promi
           version: asNumber(suggestionProps.version),
           mode: suggestionProps.mode,
           trigger: suggestionProps.trigger ?? "manual",
+          whyNow: suggestionProps.whyNow ?? null,
           text: suggestionProps.text,
           evidence: JSON.parse(String(suggestionProps.evidenceJson || "[]")),
           responseTargets: JSON.parse(String(suggestionProps.responseTargetJson || "[]")),
+          reasoningPath: JSON.parse(String(suggestionProps.reasoningPathJson || "{\"nodes\":[],\"edges\":[]}")),
+          toolCalls: JSON.parse(String(suggestionProps.graphToolCallsJson || "[]")),
+          learnedFromCount: asNumber(suggestionProps.learnedFromCount),
+          trace: JSON.parse(String(suggestionProps.traceJson || "null")),
           basis: suggestionProps.basis,
           transcriptRevision: asNumber(suggestionProps.transcriptRevision),
           createdAt: String(suggestionProps.createdAt),
@@ -228,6 +233,7 @@ async function reserveSession(ownerId: string, meetingUrl: string, requestedProj
          id: $sessionId, ownerId: $ownerId, projectId: p.id, meetingUrl: $meetingUrl,
          meetingPlatform: $meetingPlatform,
          status: 'joining', transcriptRevision: 0, stopRevision: 0,
+         floorSpeakerIds: [], floorQuietSince: $now,
          createdAt: $now, updatedAt: $now
        })
        CREATE (p)-[:HAS_SESSION]->(s)

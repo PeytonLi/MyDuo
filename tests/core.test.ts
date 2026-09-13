@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import test from "node:test";
+import { decideAutoTrigger } from "../src/lib/server/auto-trigger";
+import { normalizedEditDistance, summarizeQuality } from "../src/lib/server/evaluation";
 import { assistanceRequestSchema, approvalRequestSchema } from "../src/lib/contracts";
 import { assertMutationOrigin, AuthError, consumeLoginAttempt, resetLoginAttempts } from "../src/lib/server/auth";
 import { parsePairingCode } from "../src/lib/server/addon";
 import { latestRecallStatus, normalizeMeetingUrl, parseStatusEvent, recallStatusFromCode, reviewStateForMeeting } from "../src/lib/server/meetings";
-import { boundEvidence } from "../src/lib/server/memory";
+import { boundEvidence, graphSearchTerms, parseGraphToolCall } from "../src/lib/server/memory";
 import { verifyRecallWebhook } from "../src/lib/server/recall";
 import { consumeVoicePreview, mediaTokenFrom, parseAcknowledgement } from "../src/lib/server/speech";
 import { parseModelSuggestion } from "../src/lib/server/suggestions";
-import { normalizeTranscriptEvent, parseTranscriptEvent } from "../src/lib/server/transcripts";
+import { normalizeTranscriptEvent, parseParticipantSpeechEvent, parseTranscriptEvent } from "../src/lib/server/transcripts";
 
 const id = "123e4567-e89b-42d3-a456-426614174000";
 
@@ -17,7 +19,7 @@ test("request contracts enforce limits and identifiers", () => {
   assert.equal(assistanceRequestSchema.parse({ mode: "clarify", selectedUtteranceIds: [], transcriptRevision: 0 }).mode, "clarify");
   assert.throws(() => assistanceRequestSchema.parse({ mode: "answer", selectedUtteranceIds: Array(11).fill(id), transcriptRevision: 0 }));
   assert.throws(() => approvalRequestSchema.parse({ suggestionId: id, version: 1, approvedText: "x".repeat(601), clientRequestId: id, reviewedTranscriptRevision: 0 }));
-  assert.throws(() => parseAcknowledgement({ commandId: id, status: "cancelled" }));
+  assert.equal(parseAcknowledgement({ commandId: id, status: "cancelled", errorCode: "HUMAN_SPEECH" }).status, "cancelled");
 });
 
 test("meeting URLs are canonical and restricted", () => {
@@ -69,6 +71,26 @@ test("Recall transcript parsing normalizes words and timing", () => {
   assert.throws(() => parseTranscriptEvent({ event: "transcript.data", data: { data: { words: [] } } }));
 });
 
+test("Recall participant speech events require floor timing and identity", () => {
+  const event = parseParticipantSpeechEvent({
+    event: "participant_events.speech_on",
+    data: {
+      data: {
+        participant: { id: 7, name: "Alex" },
+        timestamp: { absolute: "2026-09-12T12:00:02Z", relative: 2 },
+        data: null,
+      },
+      bot: { id: "bot-1" },
+    },
+  });
+  assert.equal(event.event, "participant_events.speech_on");
+  assert.equal(event.data.data.participant.id, 7);
+  assert.throws(() => parseParticipantSpeechEvent({
+    event: "participant_events.speech_on",
+    data: { data: { participant: { id: 7, name: "Alex" } }, bot: { id: "bot-1" } },
+  }));
+});
+
 test("Recall signatures reject tampering and stale delivery", () => {
   const body = '{"event":"bot.done"}';
   const secret = `whsec_${Buffer.from("regression-secret").toString("base64")}`;
@@ -104,6 +126,20 @@ test("evidence bounding never exceeds the prompt budget", () => {
   ];
   assert.deepEqual(boundEvidence(evidence, 6).map((item) => item.excerpt), ["1234", "56"]);
   assert.deepEqual(boundEvidence(evidence, 0), []);
+});
+
+test("graph tools are allowlisted, bounded, and tokenized deterministically", () => {
+  assert.deepEqual(graphSearchTerms("What does SECURITY approval block for Friday's launch?"), [
+    "security", "approval", "block", "friday's", "launch",
+  ]);
+  assert.deepEqual(parseGraphToolCall("search_project_knowledge", '{"query":"security approval","limit":4}'), {
+    name: "search_project_knowledge", query: "security approval", limit: 4,
+  });
+  assert.deepEqual(parseGraphToolCall("trace_dependencies", `{"factIds":["${id}"]}`), {
+    name: "trace_dependencies", factIds: [id], depth: 3,
+  });
+  assert.throws(() => parseGraphToolCall("run_cypher", '{"query":"MATCH (n) RETURN n"}'));
+  assert.throws(() => parseGraphToolCall("trace_dependencies", '{"factIds":[]}'));
 });
 
 test("origin and media bearer checks reject cross-site or malformed requests", () => {
@@ -167,4 +203,61 @@ test("meeting history flags only unfinished transcript review", () => {
   assert.equal(reviewStateForMeeting("ended", 4, "", 0), "pending");
   assert.equal(reviewStateForMeeting("ended", 4, "ready", 1), "pending");
   assert.equal(reviewStateForMeeting("ended", 4, "ready", 0), "complete");
+});
+test("automatic drafting only reacts to meaningful meeting events", () => {
+  const turn = (text: string, id = randomUUID()) => ({
+    id,
+    sessionId: randomUUID(),
+    speakerId: null,
+    speakerName: "Alex",
+    text,
+    startMs: 0,
+    endMs: 1,
+    isBot: false,
+  });
+
+  assert.equal(decideAutoTrigger([turn("Thanks, that makes sense.")]).shouldDraft, false);
+  const targetId = randomUUID();
+  assert.deepEqual(
+    decideAutoTrigger([turn("Does legal approval block the Friday handoff?", targetId)]),
+    {
+      shouldDraft: true,
+      mode: "answer",
+      whyNow: "A new dependency or schedule risk was mentioned.",
+      responseTargetIds: [targetId],
+    },
+  );
+  assert.equal(decideAutoTrigger([turn("Actually, the launch moved to Monday.")]).mode, "support");
+  assert.equal(decideAutoTrigger([turn("Who owns accessibility review?")]).whyNow, "The meeting raised an unresolved owner or deadline.");
+});
+
+test("quality metrics score evidence, edits, and latency", () => {
+  assert.equal(normalizedEditDistance("ship Friday", "ship Friday"), 0);
+  assert.equal(normalizedEditDistance("", "ship Friday"), 1);
+  const summary = summarizeQuality([
+    {
+      expectedEvidenceIds: ["a", "b"],
+      actualEvidenceIds: ["a", "extra"],
+      claimCount: 2,
+      supportedClaimCount: 1,
+      generatedText: "Ship Friday",
+      approvedText: "Ship Friday",
+      generationMs: 100,
+      approvalToAudioMs: 250,
+    },
+    {
+      expectedEvidenceIds: ["c"],
+      actualEvidenceIds: ["c"],
+      claimCount: 1,
+      supportedClaimCount: 1,
+      generationMs: 300,
+      approvalToAudioMs: 500,
+    },
+  ]);
+  assert.equal(summary.evidencePrecision, 2 / 3);
+  assert.equal(summary.evidenceRecall, 2 / 3);
+  assert.equal(summary.unsupportedClaimRate, 1 / 3);
+  assert.equal(summary.approvalRate, 0.5);
+  assert.equal(summary.generationP95Ms, 300);
+  assert.equal(summary.approvalToAudioP50Ms, 250);
 });

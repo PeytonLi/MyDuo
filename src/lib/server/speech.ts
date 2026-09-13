@@ -12,14 +12,15 @@ const bootstrapSchema = z.object({
 
 const acknowledgementSchema = z.object({
   commandId: z.string().uuid(),
-  status: z.enum(["playing", "completed", "failed", "uncertain"]),
+  status: z.enum(["playing", "completed", "cancelled", "failed", "uncertain"]),
   errorCode: z.string().trim().max(100).optional(),
 });
 
 const ACTIVE_SPEECH = ["queued", "claimed", "preparing", "playing"];
 const TRANSITIONS: Record<string, string[]> = {
-  preparing: ["playing", "completed", "failed", "uncertain"],
-  playing: ["completed", "failed", "uncertain"],
+  claimed: ["cancelled", "failed", "uncertain"],
+  preparing: ["playing", "completed", "cancelled", "failed", "uncertain"],
+  playing: ["completed", "cancelled", "failed", "uncertain"],
 };
 const SETTLED_SPEECH = ["completed", "cancelled", "failed", "uncertain", "expired"];
 
@@ -195,19 +196,28 @@ export async function heartbeatAndClaim(mediaTokenHash: string, sessionId: strin
        SET s.mediaLastSeenAt = $now, s.updatedAt = $now
        WITH s
        OPTIONAL MATCH (c:SpeechCommand {sessionId: s.id, status: 'queued'})
-       WHERE datetime(c.expiresAt) > datetime()
+       WHERE datetime(c.expiresAt) > datetime() AND size(coalesce(s.floorSpeakerIds, [])) = 0
        WITH s, c ORDER BY c.createdAt ASC
        WITH s, collect(c)[0] AS command
        FOREACH (_ IN CASE WHEN command IS NULL THEN [] ELSE [1] END |
          SET command.status = 'claimed', command.claimedAt = $now, command.updatedAt = $now
        )
-       RETURN s.stopRevision AS stopRevision, command`,
+       RETURN s.stopRevision AS stopRevision, command,
+              size(coalesce(s.floorSpeakerIds, [])) > 0 AS humanSpeaking,
+              s.floorQuietSince AS floorQuietSince`,
       { mediaTokenHash, sessionId, now },
     );
     if (!result.records.length) throw new MeetingError("Media authorization expired", "MEDIA_UNAUTHORIZED", 401);
     const record = result.records[0];
     const command = record.get("command")?.properties as Record<string, unknown> | undefined;
-    return { stopRevision: asNumber(record.get("stopRevision")), command: command ? mapSpeech(command) : null };
+    return {
+      stopRevision: asNumber(record.get("stopRevision")),
+      command: command ? mapSpeech(command) : null,
+      floor: {
+        humanSpeaking: Boolean(record.get("humanSpeaking")),
+        quietSince: record.get("floorQuietSince") ? String(record.get("floorQuietSince")) : null,
+      },
+    };
   });
 }
 
@@ -227,6 +237,8 @@ export async function acknowledgeCommand(
        WITH s, c, c.status AS previousStatus
        FOREACH (_ IN CASE WHEN previousStatus IN $allowedFrom THEN [1] ELSE [] END |
          SET c.status = $status, c.errorCode = $errorCode, c.updatedAt = $now,
+             c.playingAt = CASE WHEN $status = 'playing' THEN $now ELSE c.playingAt END,
+             c.completedAt = CASE WHEN $status = 'completed' THEN $now ELSE c.completedAt END,
              s.activeSpeechId = CASE WHEN $terminal THEN null ELSE s.activeSpeechId END,
              s.updatedAt = $now
        )
@@ -238,7 +250,7 @@ export async function acknowledgeCommand(
         allowedFrom,
         status: input.status,
         errorCode: input.errorCode || null,
-        terminal: ["completed", "failed", "uncertain"].includes(input.status),
+        terminal: ["completed", "cancelled", "failed", "uncertain"].includes(input.status),
         now: new Date().toISOString(),
       },
     );
@@ -258,7 +270,7 @@ export async function prepareApprovedAudio(mediaTokenHash: string, sessionId: st
       `MATCH (a:AccessSession {tokenHash: $mediaTokenHash, scopedSessionId: $sessionId, kind: 'media'}),
              (s:Session {id: $sessionId}), (c:SpeechCommand {id: $commandId, sessionId: $sessionId, status: 'claimed'})
        WHERE a.expiresAt > datetime() AND s.activeSpeechId = c.id AND datetime(c.expiresAt) > datetime()
-       SET c.status = 'preparing', c.updatedAt = $now
+       SET c.status = 'preparing', c.preparedAt = $now, c.updatedAt = $now
        RETURN c.approvedText AS approvedText, c.voiceId AS voiceId`,
       { mediaTokenHash, sessionId, commandId, now: new Date().toISOString() },
     );
@@ -287,20 +299,30 @@ export async function assertApprovedAudioActive(mediaTokenHash: string, sessionI
   if (!active) throw new MeetingError("Speech command was cancelled", "COMMAND_CANCELLED", 409);
 }
 
-export async function synthesizeApprovedText(text: string, voiceId: string) {
+async function requestTextToSpeech(text: string, voiceId: string, stream: boolean, signal?: AbortSignal) {
   if (!allowedVoice(voiceId)) throw new MeetingError("Voice is not available", "VOICE_NOT_ALLOWED", 400);
   const { apiKey, model } = elevenLabsConfig();
   const response = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128&enable_logging=false`,
+    `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}${stream ? "/stream" : ""}?output_format=mp3_44100_128&enable_logging=false`,
     {
       method: "POST",
       headers: { "xi-api-key": apiKey, "Content-Type": "application/json", Accept: "audio/mpeg" },
       body: JSON.stringify({ text, model_id: model }),
-      signal: AbortSignal.timeout(20_000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000),
     },
   );
   if (!response.ok) throw new MeetingError(`Voice synthesis failed (${response.status})`, "TTS_FAILED", 502);
-  return response.arrayBuffer();
+  return response;
+}
+
+export async function synthesizeApprovedText(text: string, voiceId: string) {
+  return (await requestTextToSpeech(text, voiceId, false)).arrayBuffer();
+}
+
+export async function streamApprovedText(text: string, voiceId: string, signal?: AbortSignal) {
+  const response = await requestTextToSpeech(text, voiceId, true, signal);
+  if (!response.body) throw new MeetingError("Voice synthesis returned no audio", "TTS_FAILED", 502);
+  return response.body;
 }
 
 export async function failCommand(sessionId: string, commandId: string, errorCode: string) {

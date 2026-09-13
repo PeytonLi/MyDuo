@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { meetingErrorResponse } from "@/lib/server/meetings";
-import { assertApprovedAudioActive, failCommand, mediaTokenFrom, prepareApprovedAudio, synthesizeApprovedText } from "@/lib/server/speech";
+import { assertApprovedAudioActive, failCommand, mediaTokenFrom, prepareApprovedAudio, streamApprovedText } from "@/lib/server/speech";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,17 +18,17 @@ export async function GET(request: Request, { params }: Context) {
     const mediaTokenHash = mediaTokenFrom(request);
     const approved = await prepareApprovedAudio(mediaTokenHash, sessionId, commandId);
     authorized = true;
-    const audio = await synthesizeApprovedText(approved.text, approved.voiceId);
+    const audio = await streamApprovedText(approved.text, approved.voiceId, request.signal);
     await assertApprovedAudioActive(mediaTokenHash, sessionId, commandId);
     return new Response(audio, {
       headers: {
         "Content-Type": "audio/mpeg",
         "Cache-Control": "private, no-store",
-        "Content-Length": String(audio.byteLength),
       },
     });
   } catch (error) {
-    if (authorized) await failCommand(sessionId, commandId, "TTS_FAILED").catch(() => undefined);
+    const aborted = request.signal.aborted || (error instanceof Error && error.name === "AbortError");
+    if (authorized && !aborted) await failCommand(sessionId, commandId, "TTS_FAILED").catch(() => undefined);
     return meetingErrorResponse(error);
   }
 }

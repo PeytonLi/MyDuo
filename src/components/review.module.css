@@ -11,6 +11,14 @@
 .cardTop strong { font-size: .68rem; letter-spacing: .12em; text-transform: uppercase; }
 .actions { align-items: center; border-top: 1px solid var(--paper-deep); display: flex; justify-content: space-between; margin-top: 25px; padding-top: 18px; }
 .actions label { margin: 0; }
+.conflict { background: #fff4dd; border: 1px solid #d79c2f; margin-top: 22px; padding: 18px; }
+.conflict > strong { display: block; font-size: .76rem; letter-spacing: .08em; text-transform: uppercase; }
+.conflict > p { color: var(--ink-soft); font-size: .88rem; line-height: 1.45; margin: 7px 0 14px; }
+.conflictItem { align-items: flex-start; border-top: 1px solid rgba(80, 52, 10, .16); display: flex; gap: 10px; margin: 0; padding: 12px 0; }
+.conflictItem input { margin-top: 3px; }
+.conflictItem span { font-size: .9rem; line-height: 1.4; }
+.conflictItem small { color: var(--ink-soft); display: block; margin-top: 3px; }
+.conflictActions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
 .saveBar { align-items: center; background: var(--ink); bottom: 0; color: var(--cream); display: flex; justify-content: space-between; left: 50%; max-width: 920px; padding: 16px 20px; position: fixed; transform: translateX(-50%); width: calc(100% - 36px); }
 .saveBar span { font-size: .78rem; font-weight: 750; }
 @media (max-width: 560px) { .intro { margin-top: 55px; } .actions { align-items: flex-start; gap: 12px; } }

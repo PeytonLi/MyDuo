@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { getDriver, readQuery, writeQuery } from "../src/lib/server/db";
 import { getSuggestionContext } from "../src/lib/server/memory";
-import { boundReviewTranscript, createQuickNote, extractMeetingReview, formatAcceptedSourceText, parseReviewOutput, updateReviewCandidate } from "../src/lib/server/reviews";
+import { boundReviewTranscript, createQuickNote, extractMeetingReview, formatAcceptedSourceText, parseReviewOutput, ReviewFactConflictError, updateReviewCandidate } from "../src/lib/server/reviews";
 
 const id = () => randomUUID();
 
@@ -86,6 +86,79 @@ test("accepted review memory is scoped, exact, and idempotent", { timeout: 30_00
     assert.equal(rejectedMemory.records[0].get("count").toNumber(), 0, "rejected candidates must not create memory");
   } finally {
     await writeQuery(async (tx) => { await tx.run("MATCH (n) WHERE n.ownerId IN [$ownerId, $otherOwnerId] DETACH DELETE n", { ownerId, otherOwnerId }); });
+  }
+});
+
+test("conflicting memory requires a choice and records supersession", { timeout: 30_000 }, async () => {
+  const ownerId = `qa-temporal-${id()}`;
+  const projectId = id();
+  const sessionId = id();
+  const utteranceId = id();
+  const oldFactId = id();
+  const candidateId = id();
+  const sourceId = id();
+  const newFactId = id();
+  const keepCandidateId = id();
+  const keepSourceId = id();
+  const keepFactId = id();
+  const now = new Date().toISOString();
+  try {
+    await writeQuery(async (tx) => tx.run(
+      `CREATE (project:Project {id: $projectId, ownerId: $ownerId, name: 'Temporal QA'})
+       CREATE (session:Session {id: $sessionId, ownerId: $ownerId, projectId: $projectId,
+         status: 'ended', reviewExtractionStatus: 'ready', updatedAt: $now})
+       CREATE (utterance:Utterance {id: $utteranceId, sessionId: $sessionId, speakerName: 'Alex',
+         text: 'Launch moves from Friday to Monday.', startMs: 0, revision: 1, isBot: false})
+       CREATE (oldFact:Fact {id: $oldFactId, ownerId: $ownerId, projectId: $projectId,
+         kind: 'deadline', text: 'Launch is Friday.', status: 'confirmed', confirmedAt: $now, validFrom: $now})
+       CREATE (candidate:ReviewCandidate {id: $candidateId, ownerId: $ownerId, sessionId: $sessionId,
+         projectId: $projectId, factKind: 'deadline', text: 'Launch is Monday.', ownerName: null,
+         evidenceIds: [$utteranceId], status: 'pending', position: 0, sourceId: $sourceId, factId: $newFactId})
+       CREATE (keep:ReviewCandidate {id: $keepCandidateId, ownerId: $ownerId, sessionId: $sessionId,
+         projectId: $projectId, factKind: 'deadline', text: 'Partner handoff is Tuesday.', ownerName: null,
+         evidenceIds: [$utteranceId], status: 'pending', position: 1, sourceId: $keepSourceId, factId: $keepFactId})
+       CREATE (project)-[:HAS_SESSION]->(session)
+       CREATE (project)-[:HAS_FACT]->(oldFact)
+       CREATE (session)-[:HAS_UTTERANCE]->(utterance)
+       CREATE (session)-[:HAS_REVIEW_CANDIDATE]->(candidate)
+       CREATE (session)-[:HAS_REVIEW_CANDIDATE]->(keep)`,
+      { ownerId, projectId, sessionId, utteranceId, oldFactId, candidateId, sourceId, newFactId, keepCandidateId, keepSourceId, keepFactId, now },
+    ));
+
+    await assert.rejects(
+      () => updateReviewCandidate(ownerId, candidateId, { action: "accept" }),
+      (error) => error instanceof ReviewFactConflictError
+        && error.conflicts.length === 1
+        && error.conflicts[0].id === oldFactId,
+      "an active same-kind fact must require an explicit resolution",
+    );
+
+    const accepted = await updateReviewCandidate(ownerId, candidateId, {
+      action: "accept", conflictResolution: "supersede", supersedeFactIds: [oldFactId],
+    });
+    assert.equal(accepted.status, "accepted");
+    const supersession = await readQuery(async (tx) => tx.run(
+      `MATCH (newFact:Fact {id: $newFactId})-[:SUPERSEDES]->(oldFact:Fact {id: $oldFactId})
+       MATCH (newFact)-[:CONTRADICTS]->(oldFact)
+       RETURN newFact.status AS newStatus, newFact.validFrom AS newValidFrom,
+              oldFact.status AS oldStatus, oldFact.validTo AS oldValidTo`,
+      { newFactId, oldFactId },
+    ));
+    assert.equal(supersession.records[0].get("newStatus"), "confirmed");
+    assert.ok(supersession.records[0].get("newValidFrom"));
+    assert.equal(supersession.records[0].get("oldStatus"), "superseded");
+    assert.ok(supersession.records[0].get("oldValidTo"));
+
+    await assert.rejects(() => updateReviewCandidate(ownerId, keepCandidateId, { action: "accept" }), ReviewFactConflictError);
+    await updateReviewCandidate(ownerId, keepCandidateId, { action: "accept", conflictResolution: "keep_both" });
+    const active = await readQuery(async (tx) => tx.run(
+      `MATCH (:Project {id: $projectId})-[:HAS_FACT]->(fact:Fact {kind: 'deadline', status: 'confirmed'})
+       WHERE fact.validTo IS NULL RETURN count(fact) AS count`,
+      { projectId },
+    ));
+    assert.equal(active.records[0].get("count").toNumber(), 2, "keep both must preserve both active facts");
+  } finally {
+    await writeQuery(async (tx) => { await tx.run("MATCH (n) WHERE n.ownerId = $ownerId DETACH DELETE n", { ownerId }); });
   }
 });
 

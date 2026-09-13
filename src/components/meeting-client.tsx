@@ -25,6 +25,49 @@ function formatOffset(milliseconds: number) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
+function TechnicalTrace({ suggestion }: { suggestion: SuggestionDraft }) {
+  const labels = new Map(suggestion.reasoningPath.nodes.map((node) => [node.id, node.label]));
+  const trace = suggestion.trace;
+  if (!trace && !suggestion.toolCalls.length && !suggestion.reasoningPath.nodes.length) return null;
+
+  return (
+    <details className="technical-trace">
+      <summary>
+        Technical trace
+        <span>{suggestion.reasoningPath.edges.length} graph hop{suggestion.reasoningPath.edges.length === 1 ? "" : "s"}{trace ? ` · ${trace.totalMs} ms` : ""}</span>
+      </summary>
+      {trace && (
+        <dl className="trace-metrics">
+          <div><dt>Model</dt><dd>{trace.model}</dd></div>
+          <div><dt>Retrieval</dt><dd>{trace.retrievalMs} ms</dd></div>
+          <div><dt>Generation</dt><dd>{trace.generationMs} ms</dd></div>
+          {trace.totalTokens !== null && <div><dt>Tokens</dt><dd>{trace.totalTokens.toLocaleString()}</dd></div>}
+          {trace.cacheHitTokens !== null && <div><dt>Cached</dt><dd>{trace.cacheHitTokens.toLocaleString()}</dd></div>}
+        </dl>
+      )}
+      {suggestion.toolCalls.length > 0 && (
+        <div className="tool-trace" aria-label="Graph tools used">
+          {suggestion.toolCalls.map((tool) => <span key={tool.name}>{tool.name.replaceAll("_", " ")} <small>{tool.resultCount} results · {tool.durationMs} ms</small></span>)}
+        </div>
+      )}
+      {suggestion.reasoningPath.edges.length > 0 ? (
+        <div className="reasoning-graph" aria-label="Neo4j evidence path">
+          {suggestion.reasoningPath.edges.map((edge, index) => (
+            <div className="graph-edge-row" key={`${edge.from}-${edge.type}-${edge.to}-${index}`}>
+              <span>{labels.get(edge.from) ?? edge.from}</span>
+              <strong>{edge.type.replaceAll("_", " ")} →</strong>
+              <span>{labels.get(edge.to) ?? edge.to}</span>
+            </div>
+          ))}
+        </div>
+      ) : suggestion.reasoningPath.nodes.length > 0 ? (
+        <div className="graph-node-list">{suggestion.reasoningPath.nodes.map((node) => <span key={node.id}>{node.label}</span>)}</div>
+      ) : null}
+      {suggestion.learnedFromCount > 0 && <p className="learning-note">Adapted from {suggestion.learnedFromCount} approved edit{suggestion.learnedFromCount === 1 ? "" : "s"} in this project.</p>}
+    </details>
+  );
+}
+
 export function MeetingClient({ sessionId }: { sessionId: string }) {
   const [session, setSession] = useState<SessionState | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
@@ -324,6 +367,7 @@ export function MeetingClient({ sessionId }: { sessionId: string }) {
           {suggestion ? (
             <article className="suggestion-card">
               <div className="suggestion-meta"><span>{suggestion.trigger === "auto" ? "Automatic question" : suggestion.mode}</span><time>{new Date(suggestion.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</time></div>
+              {suggestion.whyNow && <p className="why-now"><strong>Why now</strong>{suggestion.whyNow}</p>}
               <div className="response-target">
                 <p>Responding to{suggestion.responseTargets.length === 0 ? " the latest conversation" : ""}</p>
                 {suggestion.responseTargets.map((target) => <blockquote key={target.id}><strong>{target.speakerName}</strong><span>“{target.text}”</span></blockquote>)}
@@ -338,6 +382,8 @@ export function MeetingClient({ sessionId }: { sessionId: string }) {
                 <p className="evidence-label">{suggestion.basis === "needs_context" ? "Needs more context" : suggestion.basis === "meeting" ? "Based on this meeting" : suggestion.basis === "notes" ? "Supported by your notes" : "Supported by notes and meeting"}</p>
                 {suggestion.evidence.map((item) => <details key={item.id}><summary>{item.title}</summary><p>“{item.excerpt}”</p>{item.occurredAt && <time>{new Date(item.occurredAt).toLocaleDateString()}</time>}</details>)}
               </div>
+
+              <TechnicalTrace suggestion={suggestion} />
 
               <div className="suggestion-actions">
                 <button className="button button-accent" onClick={speak} disabled={!canSpeak || busy !== null}>{busy === "speak" ? "Preparing…" : session.mediaReady ? "Speak to meeting" : "Waiting for audio"}</button>

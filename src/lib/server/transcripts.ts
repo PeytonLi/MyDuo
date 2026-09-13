@@ -23,10 +23,37 @@ const transcriptEventSchema = z.object({
   }),
 });
 
+const participantSpeechEventSchema = z.object({
+  event: z.enum(["participant_events.speech_on", "participant_events.speech_off"]),
+  data: z.object({
+    data: z.object({
+      participant: z.object({
+        id: z.union([z.string(), z.number()]),
+        name: z.string().max(120).nullable(),
+      }).passthrough(),
+      timestamp: z.object({
+        absolute: z.string().datetime({ offset: true }),
+        relative: z.number().nonnegative(),
+      }),
+    }).passthrough(),
+    bot: z.object({ id: z.string().min(1) }).passthrough(),
+  }).passthrough(),
+});
+
 export type TranscriptEvent = z.infer<typeof transcriptEventSchema>;
+export type ParticipantSpeechEvent = z.infer<typeof participantSpeechEventSchema>;
+
+const asNumber = (value: unknown) =>
+  value && typeof value === "object" && "toNumber" in value
+    ? (value as { toNumber(): number }).toNumber()
+    : Number(value ?? 0);
 
 export function parseTranscriptEvent(value: unknown) {
   return transcriptEventSchema.parse(value);
+}
+
+export function parseParticipantSpeechEvent(value: unknown) {
+  return participantSpeechEventSchema.parse(value);
 }
 
 export function normalizeTranscriptEvent(event: TranscriptEvent) {
@@ -97,6 +124,56 @@ export async function ingestTranscript(eventId: string, event: TranscriptEvent) 
     return {
       knownSession: true,
       duplicate: !result.records[0].get("fresh"),
+    };
+  });
+}
+
+export async function ingestParticipantSpeech(eventId: string, event: ParticipantSpeechEvent) {
+  const participantId = String(event.data.data.participant.id);
+  const participantName = event.data.data.participant.name?.trim() || "Unknown speaker";
+  const speaking = event.event === "participant_events.speech_on";
+  const isBot = participantName.toLowerCase() === "myduo";
+  const freshToken = randomUUID();
+  const now = new Date().toISOString();
+
+  return writeQuery(async (tx) => {
+    const result = await tx.run(
+      `MATCH (s:Session {providerBotId: $providerBotId})
+       MERGE (d:RecallDelivery {id: $eventId})
+       ON CREATE SET d.createdAt = $now, d.freshToken = $freshToken
+       WITH s, d, d.freshToken = $freshToken AS fresh,
+            coalesce(s.floorSpeakerIds, []) AS currentSpeakerIds
+       WITH s, d, fresh,
+            CASE
+              WHEN NOT fresh OR $isBot THEN currentSpeakerIds
+              WHEN $speaking AND NOT $participantId IN currentSpeakerIds THEN currentSpeakerIds + $participantId
+              WHEN NOT $speaking THEN [id IN currentSpeakerIds WHERE id <> $participantId]
+              ELSE currentSpeakerIds
+            END AS nextSpeakerIds
+       FOREACH (_ IN CASE WHEN fresh THEN [1] ELSE [] END | SET d.processedAt = $now)
+       FOREACH (_ IN CASE WHEN fresh AND NOT $isBot THEN [1] ELSE [] END |
+         SET s.floorSpeakerIds = nextSpeakerIds,
+             s.floorQuietSince = CASE WHEN size(nextSpeakerIds) = 0 THEN $occurredAt ELSE null END,
+             s.updatedAt = $now
+       )
+       REMOVE d.freshToken
+       RETURN s.id AS sessionId, fresh, size(nextSpeakerIds) AS speakingCount`,
+      {
+        providerBotId: event.data.bot.id,
+        eventId,
+        freshToken,
+        participantId,
+        speaking,
+        isBot,
+        occurredAt: event.data.data.timestamp.absolute,
+        now,
+      },
+    );
+    if (!result.records.length) return { knownSession: false, duplicate: false, speakingCount: 0 };
+    return {
+      knownSession: true,
+      duplicate: !result.records[0].get("fresh"),
+      speakingCount: asNumber(result.records[0].get("speakingCount")),
     };
   });
 }

@@ -28,15 +28,59 @@ export const responseTargetSchema = z.object({
   text: z.string().min(1).max(5_000),
 });
 
+export const reasoningNodeSchema = z.object({
+  id: z.string().min(1),
+  kind: z.enum(["fact", "source", "person"]),
+  label: z.string().min(1).max(2_000),
+});
+
+export const reasoningEdgeSchema = z.object({
+  from: z.string().min(1),
+  to: z.string().min(1),
+  type: z.enum(["SUPPORTED_BY", "OWNED_BY", "DEPENDS_ON", "CONTRADICTS", "SUPERSEDES"]),
+});
+
+export const reasoningPathSchema = z.object({
+  nodes: z.array(reasoningNodeSchema).max(60),
+  edges: z.array(reasoningEdgeSchema).max(100),
+});
+
+export const graphToolTraceSchema = z.object({
+  name: z.enum(["search_project_knowledge", "trace_dependencies", "find_conflicts", "get_owners_and_deadlines"]),
+  durationMs: z.number().int().nonnegative(),
+  resultCount: z.number().int().nonnegative(),
+});
+
+export const generationTraceSchema = z.object({
+  id: idSchema,
+  model: z.string().min(1),
+  status: z.enum(["completed", "failed"]),
+  toolCalls: z.array(graphToolTraceSchema).max(4),
+  evidenceIds: z.array(z.string()),
+  retrievalMs: z.number().int().nonnegative(),
+  generationMs: z.number().int().nonnegative(),
+  totalMs: z.number().int().nonnegative(),
+  promptTokens: z.number().int().nonnegative().nullable(),
+  completionTokens: z.number().int().nonnegative().nullable(),
+  totalTokens: z.number().int().nonnegative().nullable(),
+  cacheHitTokens: z.number().int().nonnegative().nullable(),
+  createdAt: z.string(),
+});
+
 export const suggestionDraftSchema = z.object({
   id: idSchema,
   sessionId: idSchema,
   version: z.number().int().positive(),
   mode: z.enum(["answer", "support", "clarify"]),
   trigger: z.enum(["manual", "auto"]).default("manual"),
+  whyNow: z.string().max(240).nullable().default(null),
   text: z.string().min(1).max(600),
   evidence: z.array(evidenceSchema),
   responseTargets: z.array(responseTargetSchema).max(10).default([]),
+  reasoningPath: reasoningPathSchema.default({ nodes: [], edges: [] }),
+  toolCalls: z.array(graphToolTraceSchema).max(4).default([]),
+  learnedFromCount: z.number().int().nonnegative().default(0),
+  trace: generationTraceSchema.nullable().default(null),
   basis: z.enum(["notes", "meeting", "mixed", "needs_context"]),
   transcriptRevision: z.number().int().nonnegative(),
   createdAt: z.string(),
@@ -111,6 +155,9 @@ export const sessionStateSchema = z.object({
 export type TranscriptTurn = z.infer<typeof transcriptTurnSchema>;
 export type Evidence = z.infer<typeof evidenceSchema>;
 export type ResponseTarget = z.infer<typeof responseTargetSchema>;
+export type ReasoningPath = z.infer<typeof reasoningPathSchema>;
+export type GraphToolTrace = z.infer<typeof graphToolTraceSchema>;
+export type GenerationTrace = z.infer<typeof generationTraceSchema>;
 export type SuggestionDraft = z.infer<typeof suggestionDraftSchema>;
 export type AutoSuggestionState = z.infer<typeof autoSuggestionStateSchema>;
 export type SpeechState = z.infer<typeof speechStateSchema>;

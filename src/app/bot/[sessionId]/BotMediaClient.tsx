@@ -3,8 +3,18 @@
 import { useEffect, useRef, useState } from "react";
 import type { SpeechState } from "@/lib/contracts";
 
-type CommandPoll = { stopRevision: number; command: SpeechState | null };
-type PendingAcknowledgement = { commandId: string; status: "playing" | "completed" | "failed" };
+type CommandPoll = {
+  stopRevision: number;
+  command: SpeechState | null;
+  floor: { humanSpeaking: boolean; quietSince: string | null };
+};
+type PendingAcknowledgement = {
+  commandId: string;
+  status: "playing" | "completed" | "cancelled" | "failed";
+  errorCode?: string;
+};
+
+const FLOOR_SILENCE_MS = 900;
 
 export default function BotMediaClient({ sessionId }: { sessionId: string }) {
   const [status, setStatus] = useState("Connecting securely…");
@@ -13,6 +23,7 @@ export default function BotMediaClient({ sessionId }: { sessionId: string }) {
   const audioAbortRef = useRef<AbortController | null>(null);
   const stopRevisionRef = useRef(0);
   const processingRef = useRef<string | null>(null);
+  const waitingCommandRef = useRef<SpeechState | null>(null);
   const pendingAcknowledgementRef = useRef<PendingAcknowledgement | null>(null);
 
   useEffect(() => {
@@ -23,20 +34,28 @@ export default function BotMediaClient({ sessionId }: { sessionId: string }) {
     const clearAudio = () => {
       audioAbortRef.current?.abort();
       audioAbortRef.current = null;
-      audioRef.current?.pause();
+      if (audioRef.current) {
+        audioRef.current.onplaying = null;
+        audioRef.current.onended = null;
+        audioRef.current.onerror = null;
+        audioRef.current.pause();
+        audioRef.current.removeAttribute("src");
+        audioRef.current.load();
+      }
       audioRef.current = null;
       if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
       audioUrlRef.current = null;
       processingRef.current = null;
+      waitingCommandRef.current = null;
     };
 
-    const acknowledge = async (token: string, commandId: string, speechStatus: "playing" | "completed" | "failed") => {
+    const acknowledge = async (token: string, pending: PendingAcknowledgement) => {
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
           const response = await fetch(`/api/media/${sessionId}/commands`, {
             method: "POST",
             headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ commandId, status: speechStatus }),
+            body: JSON.stringify(pending),
           });
           if (response.ok) return;
         } catch {
@@ -50,12 +69,70 @@ export default function BotMediaClient({ sessionId }: { sessionId: string }) {
     const persistAcknowledgement = async (token: string, pending: PendingAcknowledgement) => {
       pendingAcknowledgementRef.current = pending;
       try {
-        await acknowledge(token, pending.commandId, pending.status);
+        await acknowledge(token, pending);
         if (pendingAcknowledgementRef.current === pending) pendingAcknowledgementRef.current = null;
         return true;
       } catch {
         return false;
       }
+    };
+
+    const appendChunk = (source: SourceBuffer, chunk: Uint8Array) => new Promise<void>((resolve, reject) => {
+      const done = () => {
+        source.removeEventListener("updateend", done);
+        source.removeEventListener("error", failed);
+        resolve();
+      };
+      const failed = () => {
+        source.removeEventListener("updateend", done);
+        source.removeEventListener("error", failed);
+        reject(new Error("Audio stream failed"));
+      };
+      source.addEventListener("updateend", done, { once: true });
+      source.addEventListener("error", failed, { once: true });
+      source.appendBuffer(chunk.slice().buffer);
+    });
+
+    const streamIntoAudio = async (response: Response, audio: HTMLAudioElement, controller: AbortController) => {
+      if (!response.body || !MediaSource.isTypeSupported("audio/mpeg")) {
+        const url = URL.createObjectURL(await response.blob());
+        audioUrlRef.current = url;
+        audio.src = url;
+        await audio.play();
+        return;
+      }
+
+      const mediaSource = new MediaSource();
+      const url = URL.createObjectURL(mediaSource);
+      audioUrlRef.current = url;
+      audio.src = url;
+      await new Promise<void>((resolve, reject) => {
+        const opened = () => {
+          controller.signal.removeEventListener("abort", aborted);
+          resolve();
+        };
+        const aborted = () => {
+          mediaSource.removeEventListener("sourceopen", opened);
+          reject(new DOMException("Aborted", "AbortError"));
+        };
+        mediaSource.addEventListener("sourceopen", opened, { once: true });
+        controller.signal.addEventListener("abort", aborted, { once: true });
+      });
+
+      const source = mediaSource.addSourceBuffer("audio/mpeg");
+      const reader = response.body.getReader();
+      controller.signal.addEventListener("abort", () => void reader.cancel(), { once: true });
+      let playback: Promise<void> | null = null;
+      while (!controller.signal.aborted) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        await appendChunk(source, value);
+        playback ??= audio.play();
+      }
+      if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
+      if (mediaSource.readyState === "open") mediaSource.endOfStream();
+      if (!playback) throw new Error("Audio stream was empty");
+      await playback;
     };
 
     const play = async (token: string, command: SpeechState) => {
@@ -70,14 +147,8 @@ export default function BotMediaClient({ sessionId }: { sessionId: string }) {
           signal: controller.signal,
         });
         if (!response.ok) throw new Error("Audio unavailable");
-        const url = URL.createObjectURL(await response.blob());
-        if (controller.signal.aborted) {
-          URL.revokeObjectURL(url);
-          return;
-        }
         audioAbortRef.current = null;
-        const audio = new Audio(url);
-        audioUrlRef.current = url;
+        const audio = new Audio();
         audioRef.current = audio;
         audio.onplaying = () => {
           setStatus("Speaking approved response");
@@ -94,7 +165,8 @@ export default function BotMediaClient({ sessionId }: { sessionId: string }) {
           setStatus("Playback needs attention");
           void persistAcknowledgement(token, { commandId: command.id, status: "failed" }).finally(clearAudio);
         };
-        await audio.play();
+        audioAbortRef.current = controller;
+        await streamIntoAudio(response, audio, controller);
       } catch {
         if (controller.signal.aborted) return;
         setStatus("Playback needs attention");
@@ -116,13 +188,26 @@ export default function BotMediaClient({ sessionId }: { sessionId: string }) {
           clearAudio();
           setStatus("Stopped — listening");
         }
+        if (data.floor.humanSpeaking && processingRef.current) {
+          const commandId = processingRef.current;
+          clearAudio();
+          setStatus("Paused for a participant — response cancelled");
+          await persistAcknowledgement(token, { commandId, status: "cancelled", errorCode: "HUMAN_SPEECH" });
+        }
         const pending = pendingAcknowledgementRef.current;
         if (pending && !await persistAcknowledgement(token, pending)) {
           setStatus("Reconnecting playback state…");
         }
-        if (data.command && !processingRef.current) {
-          void play(token, data.command);
-        } else if (!audioRef.current) {
+        if (data.command) waitingCommandRef.current = data.command;
+        const quietSince = data.floor.quietSince ? Date.parse(data.floor.quietSince) : 0;
+        const floorIsClear = !data.floor.humanSpeaking && (!quietSince || Date.now() - quietSince >= FLOOR_SILENCE_MS);
+        if (waitingCommandRef.current && !processingRef.current && floorIsClear) {
+          const command = waitingCommandRef.current;
+          waitingCommandRef.current = null;
+          void play(token, command);
+        } else if (waitingCommandRef.current) {
+          setStatus("Waiting for a clear moment…");
+        } else if (!processingRef.current && !audioRef.current) {
           setStatus("Listening");
         }
       } catch {

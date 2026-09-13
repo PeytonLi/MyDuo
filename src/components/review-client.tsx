@@ -2,16 +2,26 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import type { ReviewCandidate } from "@/lib/server/reviews";
+import type { FactConflict, ReviewCandidate } from "@/lib/server/reviews";
 import { Wordmark } from "./wordmark";
 import styles from "./review.module.css";
 
-type EditableCandidate = ReviewCandidate & { selected: boolean };
+type EditableCandidate = ReviewCandidate & {
+  selected: boolean;
+  conflicts?: FactConflict[];
+  supersedeFactIds: string[];
+};
+
+class ApiError extends Error {
+  constructor(public readonly code: string | undefined, message: string, public readonly conflicts: FactConflict[] = []) {
+    super(message);
+  }
+}
 
 async function readJson(response: Response | Promise<Response>) {
   const resolved = await response;
   const body = await resolved.json();
-  if (!resolved.ok) throw new Error(body.message || "Something went wrong.");
+  if (!resolved.ok) throw new ApiError(body.code, body.message || "Something went wrong.", body.conflicts);
   return body;
 }
 
@@ -27,7 +37,7 @@ export function ReviewClient({ sessionId }: { sessionId: string }) {
     }))
       .then((body) => {
         if (!active) return;
-        setCandidates(body.candidates.map((candidate: ReviewCandidate) => ({ ...candidate, selected: false })));
+        setCandidates(body.candidates.map((candidate: ReviewCandidate) => ({ ...candidate, selected: false, supersedeFactIds: [] })));
         setMessage(body.candidates.length ? "Choose only the items you want MyDuo to remember." : "No clear memory items were found.");
       })
       .catch((error) => active && setMessage(error instanceof Error ? error.message : "Unable to prepare the review."))
@@ -59,15 +69,52 @@ export function ReviewClient({ sessionId }: { sessionId: string }) {
     if (!selected.length) return setMessage("Choose at least one item to save.");
     setBusy(true);
     try {
-      const saved = await Promise.all(selected.map((candidate) => readJson(fetch(`/api/review-candidates/${candidate.id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "accept", factKind: candidate.factKind, text: candidate.text, ownerName: candidate.ownerName }),
-      }))));
+      const saved: ReviewCandidate[] = [];
+      const conflicts = new Map<string, FactConflict[]>();
+      for (const candidate of selected) {
+        try {
+          saved.push(await accept(candidate));
+        } catch (error) {
+          if (error instanceof ApiError && error.code === "FACT_CONFLICT") conflicts.set(candidate.id, error.conflicts);
+          else throw error;
+        }
+      }
       const byId = new Map(saved.map((candidate) => [candidate.id, candidate]));
-      setCandidates((current) => current.map((candidate) => byId.has(candidate.id) ? { ...candidate, ...byId.get(candidate.id), selected: false } : candidate));
-      setMessage(`${saved.length} memory item${saved.length === 1 ? "" : "s"} saved.`);
+      setCandidates((current) => current.map((candidate) => byId.has(candidate.id)
+        ? { ...candidate, ...byId.get(candidate.id), selected: false, conflicts: undefined, supersedeFactIds: [] }
+        : conflicts.has(candidate.id) ? { ...candidate, selected: false, conflicts: conflicts.get(candidate.id), supersedeFactIds: [] } : candidate));
+      setMessage(conflicts.size
+        ? `${conflicts.size} memory item${conflicts.size === 1 ? " needs" : "s need"} a conflict decision.`
+        : `${saved.length} memory item${saved.length === 1 ? "" : "s"} saved.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to save the selected memory.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function accept(candidate: EditableCandidate, conflictResolution?: "keep_both" | "supersede") {
+    return readJson(fetch(`/api/review-candidates/${candidate.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "accept", factKind: candidate.factKind, text: candidate.text, ownerName: candidate.ownerName,
+        conflictResolution,
+        ...(conflictResolution === "supersede" ? { supersedeFactIds: candidate.supersedeFactIds } : {}),
+      }),
+    }));
+  }
+
+  async function resolveConflict(candidate: EditableCandidate, resolution: "keep_both" | "supersede") {
+    setBusy(true);
+    try {
+      const saved = await accept(candidate, resolution);
+      update(candidate.id, { ...saved, selected: false, conflicts: undefined, supersedeFactIds: [] });
+      setMessage(resolution === "supersede" ? "New memory saved and selected older memory replaced." : "Both memories saved as active context.");
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "FACT_CONFLICT") {
+        update(candidate.id, { conflicts: error.conflicts, supersedeFactIds: [] });
+      }
+      setMessage(error instanceof Error ? error.message : "Unable to resolve the memory conflict.");
     } finally {
       setBusy(false);
     }
@@ -95,8 +142,24 @@ export function ReviewClient({ sessionId }: { sessionId: string }) {
         <textarea id={`text-${candidate.id}`} rows={3} maxLength={2000} value={candidate.text} disabled={candidate.status !== "pending" || busy} onChange={(event) => update(candidate.id, { text: event.target.value })} />
         <label htmlFor={`owner-${candidate.id}`}>Owner <span className="optional">optional</span></label>
         <input id={`owner-${candidate.id}`} maxLength={120} value={candidate.ownerName ?? ""} disabled={candidate.status !== "pending" || busy} onChange={(event) => update(candidate.id, { ownerName: event.target.value || null })} />
+        {candidate.status === "pending" && candidate.conflicts?.length ? <div className={styles.conflict}>
+          <strong>Possible conflict</strong>
+          <p>Choose any older memories this update replaces, or keep them all active.</p>
+          {candidate.conflicts.map((conflict) => <label className={styles.conflictItem} key={conflict.id}>
+            <input type="checkbox" checked={candidate.supersedeFactIds.includes(conflict.id)} disabled={busy} onChange={(event) => update(candidate.id, {
+              supersedeFactIds: event.target.checked
+                ? [...candidate.supersedeFactIds, conflict.id]
+                : candidate.supersedeFactIds.filter((id) => id !== conflict.id),
+            })} />
+            <span>{conflict.text}<small>{conflict.validFrom ? `Active since ${new Date(conflict.validFrom).toLocaleDateString()}` : "Currently active"}</small></span>
+          </label>)}
+          <div className={styles.conflictActions}>
+            <button className="button button-secondary" disabled={busy} onClick={() => resolveConflict(candidate, "keep_both")}>Keep both</button>
+            <button className="button button-accent" disabled={busy || !candidate.supersedeFactIds.length} onClick={() => resolveConflict(candidate, "supersede")}>Replace selected</button>
+          </div>
+        </div> : null}
         {candidate.status === "pending" && <div className={styles.actions}>
-          <label className="check-row"><input type="checkbox" checked={candidate.selected} disabled={busy} onChange={(event) => update(candidate.id, { selected: event.target.checked })} /><span><strong>Save this memory</strong><small>It becomes available in future meetings.</small></span></label>
+          {!candidate.conflicts?.length && <label className="check-row"><input type="checkbox" checked={candidate.selected} disabled={busy} onChange={(event) => update(candidate.id, { selected: event.target.checked })} /><span><strong>Save this memory</strong><small>It becomes available in future meetings.</small></span></label>}
           <button className="text-button danger" disabled={busy} onClick={() => reject(candidate)}>Reject</button>
         </div>}
       </article>)}

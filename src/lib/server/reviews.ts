@@ -71,6 +71,8 @@ export const reviewUpdateSchema = z.discriminatedUnion("action", [
     factKind: factKindSchema.optional(),
     text: z.string().trim().min(1).max(2_000).optional(),
     ownerName: z.string().trim().max(120).nullable().optional(),
+    conflictResolution: z.enum(["keep_both", "supersede"]).optional(),
+    supersedeFactIds: z.array(z.string().uuid()).max(10).optional(),
   }),
   z.object({ action: z.literal("reject") }),
 ]);
@@ -86,8 +88,20 @@ export type ReviewCandidate = ModelCandidate & {
   position: number;
 };
 
+export type FactConflict = {
+  id: string;
+  factKind: z.infer<typeof factKindSchema>;
+  text: string;
+  validFrom: string | null;
+};
+
 export class ReviewInputError extends Error {}
 export class ReviewConflictError extends Error {}
+export class ReviewFactConflictError extends ReviewConflictError {
+  constructor(public readonly conflicts: FactConflict[]) {
+    super("This may conflict with active memory. Choose whether to keep both or replace older memory.");
+  }
+}
 export class ReviewGenerationError extends Error {}
 
 const string = (record: Neo4jRecord, key: string) => String(record.get(key) ?? "");
@@ -336,6 +350,36 @@ async function acceptCandidate(ownerId: string, candidateId: string, input: z.in
     const factKind = input.factKind ?? factKindSchema.parse(string(record, "factKind"));
     const text = input.text ?? string(record, "text");
     const ownerName = input.ownerName === undefined ? (record.get("ownerName") ? string(record, "ownerName") : null) : input.ownerName || null;
+    const supersedeFactIds = input.conflictResolution === "supersede" ? input.supersedeFactIds ?? [] : [];
+    if (input.conflictResolution === "supersede" && !supersedeFactIds.length) {
+      throw new ReviewInputError("Choose at least one older memory to replace.");
+    }
+    if (input.conflictResolution !== "supersede" && input.supersedeFactIds?.length) {
+      throw new ReviewInputError("Older memory can only be replaced with supersede resolution.");
+    }
+    // ponytail: Same-kind active facts are possible conflicts; add entity extraction if projects regularly exceed ten per kind.
+    const conflictsResult = await tx.run(
+      `MATCH (project:Project {id: $projectId, ownerId: $ownerId})-[:HAS_FACT]->(fact:Fact {
+         ownerId: $ownerId, projectId: $projectId, kind: $factKind, status: 'confirmed'
+       })
+       WHERE fact.id <> $factId AND fact.validTo IS NULL
+       RETURN fact.id AS id, fact.kind AS factKind, fact.text AS text,
+              coalesce(fact.validFrom, fact.confirmedAt) AS validFrom
+       ORDER BY coalesce(fact.validFrom, fact.confirmedAt) DESC
+       LIMIT 10`,
+      { ownerId, projectId: string(record, "projectId"), factKind, factId: string(record, "factId") },
+    );
+    const conflicts: FactConflict[] = conflictsResult.records.map((conflict) => ({
+      id: string(conflict, "id"),
+      factKind: factKindSchema.parse(string(conflict, "factKind")),
+      text: string(conflict, "text"),
+      validFrom: conflict.get("validFrom") ? string(conflict, "validFrom") : null,
+    }));
+    if (conflicts.length && !input.conflictResolution) throw new ReviewFactConflictError(conflicts);
+    const conflictIds = new Set(conflicts.map((conflict) => conflict.id));
+    if (supersedeFactIds.some((id) => !conflictIds.has(id))) {
+      throw new ReviewConflictError("One or more older memories are no longer active conflicts.");
+    }
     const evidenceIds = (record.get("evidenceIds") as unknown[]).map(String);
     const evidenceResult = await tx.run(
       `MATCH (utterance:Utterance {sessionId: $sessionId})
@@ -365,7 +409,8 @@ async function acceptCandidate(ownerId: string, candidateId: string, input: z.in
          source.evidenceIds = $evidenceIds, source.reviewCandidateId = $candidateId
        MERGE (fact:Fact {id: $factId, ownerId: $ownerId})
        ON CREATE SET fact.ownerId = $ownerId, fact.projectId = $projectId,
-         fact.kind = $factKind, fact.text = $text, fact.status = 'confirmed', fact.confirmedAt = $now
+         fact.kind = $factKind, fact.text = $text, fact.status = 'confirmed',
+         fact.confirmedAt = $now, fact.validFrom = $occurredAt, fact.validTo = null
        MERGE (project)-[:HAS_SOURCE]->(source)
        MERGE (project)-[:HAS_FACT]->(fact)
        MERGE (fact)-[:SUPPORTED_BY]->(source)
@@ -387,6 +432,25 @@ async function acceptCandidate(ownerId: string, candidateId: string, input: z.in
         evidenceIds,
       },
     );
+    if (input.conflictResolution === "supersede") {
+      const superseded = await tx.run(
+        `MATCH (newFact:Fact {id: $factId, ownerId: $ownerId, projectId: $projectId})
+         MATCH (oldFact:Fact {ownerId: $ownerId, projectId: $projectId, kind: $factKind, status: 'confirmed'})
+         WHERE oldFact.id IN $supersedeFactIds AND oldFact.validTo IS NULL
+         SET oldFact.status = 'superseded', oldFact.validFrom = coalesce(oldFact.validFrom, oldFact.confirmedAt, $now),
+             oldFact.validTo = $now
+         MERGE (newFact)-[:SUPERSEDES]->(oldFact)
+         MERGE (newFact)-[:CONTRADICTS]->(oldFact)
+         RETURN count(oldFact) AS count`,
+        {
+          ownerId, projectId: string(record, "projectId"), factId, factKind,
+          supersedeFactIds, now,
+        },
+      );
+      if (number(superseded.records[0]?.get("count")) !== supersedeFactIds.length) {
+        throw new ReviewConflictError("One or more older memories changed before they could be replaced.");
+      }
+    }
     const updated = await tx.run(
       `MATCH (candidate:ReviewCandidate {id: $candidateId, ownerId: $ownerId})
        RETURN candidate.id AS id, candidate.sessionId AS sessionId,

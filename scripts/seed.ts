@@ -53,6 +53,7 @@ const constraints = [
   ["session_id", "Session", "id"],
   ["utterance_id", "Utterance", "id"],
   ["suggestion_id", "Suggestion", "id"],
+  ["generation_trace_id", "GenerationTrace", "id"],
   ["review_candidate_id", "ReviewCandidate", "id"],
   ["speech_command_id", "SpeechCommand", "id"],
   ["access_session_token", "AccessSession", "tokenHash"],
@@ -75,6 +76,7 @@ async function seed() {
       `CREATE CONSTRAINT speech_request IF NOT EXISTS
        FOR (n:SpeechCommand) REQUIRE (n.sessionId, n.clientRequestId) IS UNIQUE`,
     );
+    await tx.run("CREATE FULLTEXT INDEX myduo_fact_text IF NOT EXISTS FOR (fact:Fact) ON EACH [fact.text]");
     });
 
     const now = new Date().toISOString();
@@ -328,6 +330,14 @@ async function seed() {
             { factId: ids.venuePlayback, dependencyId: ids.northstarDeadline },
           ],
         },
+      );
+    });
+    await writeQuery(async (tx) => {
+      await tx.run(
+        `MATCH (fact:Fact {ownerId: $ownerId})
+         SET fact.validFrom = coalesce(fact.validFrom, fact.confirmedAt, $now),
+             fact.validTo = CASE WHEN fact.status = 'superseded' THEN fact.validTo ELSE null END`,
+        { ownerId: ids.owner, now },
       );
     });
     console.log("Seeded MyDuo demo projects, including Northstar Summit keynote video.");

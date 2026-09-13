@@ -1,0 +1,22 @@
+[
+  { "name": "direct launch question", "text": "How is the launch date going?", "shouldDraft": true, "mode": "answer" },
+  { "name": "security blocker", "text": "Security approval may block the Friday release.", "shouldDraft": true, "mode": "support" },
+  { "name": "legal slip question", "text": "Does the legal slip affect partner handoff?", "shouldDraft": true, "mode": "answer" },
+  { "name": "owner gap", "text": "Who owns the accessibility review?", "shouldDraft": true, "mode": "answer" },
+  { "name": "deadline gap", "text": "What is the deadline for picture lock?", "shouldDraft": true, "mode": "answer" },
+  { "name": "schedule risk", "text": "The studio slot is at risk if the purchase order misses today.", "shouldDraft": true, "mode": "support" },
+  { "name": "date correction", "text": "Actually, the final handoff moved to October 10.", "shouldDraft": true, "mode": "support" },
+  { "name": "decision replacement", "text": "We replaced the quote cut with the backup version.", "shouldDraft": true, "mode": "support" },
+  { "name": "dependency statement", "text": "Picture lock depends on the legal decision.", "shouldDraft": true, "mode": "support" },
+  { "name": "tracking question", "text": "Are we still on track for venue playback?", "shouldDraft": true, "mode": "answer" },
+  { "name": "why question", "text": "Why does sound mix wait for picture lock?", "shouldDraft": true, "mode": "answer" },
+  { "name": "responsibility question", "text": "Who is responsible for releasing the purchase order?", "shouldDraft": true, "mode": "answer" },
+  { "name": "explicit delay", "text": "The caption review is delayed until Thursday.", "shouldDraft": true, "mode": "support" },
+  { "name": "missed checkpoint", "text": "We missed the customer quote checkpoint.", "shouldDraft": true, "mode": "support" },
+  { "name": "neutral acknowledgement", "text": "Thanks, that makes sense.", "shouldDraft": false, "mode": "clarify" },
+  { "name": "greeting", "text": "Good morning everyone.", "shouldDraft": false, "mode": "clarify" },
+  { "name": "status narration", "text": "I uploaded the latest cut to Frame.io.", "shouldDraft": false, "mode": "clarify" },
+  { "name": "agreement", "text": "I agree with that approach.", "shouldDraft": false, "mode": "clarify" },
+  { "name": "break announcement", "text": "Let us take a five minute break.", "shouldDraft": false, "mode": "clarify" },
+  { "name": "closing", "text": "That covers everything for today.", "shouldDraft": false, "mode": "clarify" }
+]

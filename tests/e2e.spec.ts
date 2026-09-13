@@ -38,6 +38,7 @@ async function withSession(driver: Driver) {
   const sessionId = randomUUID();
   const utteranceId = randomUUID();
   const suggestionId = randomUUID();
+  const traceId = randomUUID();
   const session = driver.session({ database: process.env.NEO4J_DATABASE || "neo4j" });
   try {
     await session.run(
@@ -60,17 +61,44 @@ async function withSession(driver: Driver) {
          version: 1, mode: 'answer', text: 'The public launch waits for the security review.',
          evidenceIds: [], evidenceJson: '[]', basis: 'notes', transcriptRevision: 1,
          responseTargetJson: $responseTargetJson,
+         whyNow: 'Someone asked a direct question.',
+         reasoningPathJson: $reasoningPathJson,
+         graphToolCallsJson: $graphToolCallsJson,
+         learnedFromCount: 2, traceJson: $traceJson,
          status: 'ready', createdAt: $now
        })
-       CREATE (s)-[:HAS_SUGGESTION]->(g)`,
+       CREATE (trace:GenerationTrace {
+         id: $traceId, ownerId: 'demo-owner', sessionId: $sessionId, suggestionId: $suggestionId,
+         model: 'deepseek-test', status: 'completed', evidenceIds: ['source-security'],
+         reasoningPathJson: $reasoningPathJson, retrievalMs: 42, generationMs: 120,
+         totalMs: 162, createdAt: $now
+       })
+       CREATE (s)-[:HAS_SUGGESTION]->(g)
+       CREATE (g)-[:HAS_TRACE]->(trace)`,
       {
         projectId: "11111111-1111-4111-8111-111111111111",
         sessionId,
         utteranceId,
         suggestionId,
+        traceId,
         now: new Date().toISOString(),
         mediaLastSeenAt: new Date(Date.now() + 60_000).toISOString(),
         responseTargetJson: JSON.stringify([{ id: utteranceId, speakerName: "Alex", text: "Can the public launch happen Friday?" }]),
+        reasoningPathJson: JSON.stringify({
+          nodes: [
+            { id: "fact-launch", kind: "fact", label: "Friday launch depends on security approval." },
+            { id: "source-security", kind: "source", label: "Security review plan" },
+          ],
+          edges: [{ from: "fact-launch", to: "source-security", type: "SUPPORTED_BY" }],
+        }),
+        graphToolCallsJson: JSON.stringify([{ name: "search_project_knowledge", durationMs: 42, resultCount: 1 }]),
+        traceJson: JSON.stringify({
+          id: traceId, model: "deepseek-test", status: "completed",
+          toolCalls: [{ name: "search_project_knowledge", durationMs: 42, resultCount: 1 }],
+          evidenceIds: ["source-security"], retrievalMs: 42, generationMs: 120, totalMs: 162,
+          promptTokens: 300, completionTokens: 25, totalTokens: 325, cacheHitTokens: 120,
+          createdAt: new Date().toISOString(),
+        }),
       },
     );
   } finally {
@@ -153,6 +181,7 @@ test("logged-out access is private and login validation is clear", async ({ page
   await expect(page.getByRole("heading", { name: "Stay in the conversation." })).toBeVisible();
   await expect(page.getByLabel("Access secret")).toHaveAttribute("autocomplete", "current-password");
   expect((await page.request.get("/api/profile")).status()).toBe(401);
+  expect((await page.request.get("/api/quality")).status()).toBe(401);
   expect((await page.request.get("/api/voices")).status()).toBe(401);
   expect((await page.request.post("/api/voices", { data: { voiceId: "EXAVITQu4vr4xnSDxMaL" }, headers: { authorization: `Bearer ${"a".repeat(32)}` } })).status()).toBe(401);
   await page.getByLabel("Access secret").fill("not-the-secret");
@@ -189,6 +218,7 @@ test("meeting draft edits, stale protection, and end state survive polling", asy
   const fixture = await withSession(driver);
   try {
     await login(page);
+    await expect(page.getByRole("heading", { name: "Technical evidence" })).toBeVisible();
     const activeMeeting = page.locator(".history-item").first();
     await expect(page.getByRole("heading", { name: "Recent meetings" })).toBeVisible();
     await expect(activeMeeting).toContainText("listening");
@@ -198,6 +228,10 @@ test("meeting draft edits, stale protection, and end state survive polling", asy
     await expect(page.locator(".utterance", { hasText: "Can the public launch happen Friday?" })).toBeVisible();
     await expect(page.locator(".response-target")).toContainText("Responding to");
     await expect(page.locator(".response-target")).toContainText("Can the public launch happen Friday?");
+    await expect(page.locator(".why-now")).toContainText("Someone asked a direct question.");
+    await page.getByText("Technical trace").click();
+    await expect(page.locator(".reasoning-graph")).toContainText("SUPPORTED BY");
+    await expect(page.locator(".technical-trace")).toContainText("Adapted from 2 approved edits");
     const draft = page.getByLabel("Suggested words");
     await expect(draft).toHaveValue("The public launch waits for the security review.");
     await draft.fill("The public launch waits for the completed security review.");
@@ -289,13 +323,14 @@ test("quick note captures during the meeting and surfaces in review", async ({ p
   const errors = watchErrors(page);
   const driver = databaseDriver();
   const fixture = await withSession(driver);
+  const noteText = `Alex asked about the Friday launch. ${randomUUID()}`;
   try {
     await login(page);
     await page.goto(`/meeting/${fixture.sessionId}`);
     const noteBox = page.getByLabel("Quick note saved for review after the meeting");
     await expect(noteBox).toBeVisible();
     await page.locator(".utterance", { hasText: "Can the public launch happen Friday?" }).click();
-    await noteBox.fill("Alex asked about the Friday launch.");
+    await noteBox.fill(noteText);
     await page.getByRole("button", { name: "Capture" }).click();
     await expect(page.getByRole("status")).toContainText("Note captured with 1 selected line");
     await expect(noteBox).toHaveValue("");
@@ -305,12 +340,26 @@ test("quick note captures during the meeting and surfaces in review", async ({ p
     await page.getByRole("link", { name: "Review meeting memory" }).click();
     await expect(page.getByRole("heading", { name: "What should MyDuo remember?" })).toBeVisible();
     const memoryBox = page.getByRole("textbox", { name: "Memory", exact: true });
-    await expect(memoryBox.first()).toHaveValue("Alex asked about the Friday launch.", { timeout: 30_000 });
+    await expect(memoryBox.first()).toHaveValue(noteText, { timeout: 30_000 });
     await page.getByLabel("Save this memory").first().check();
     await page.getByRole("button", { name: "Save accepted" }).click();
-    await expect(page.getByRole("status")).toContainText("1 memory item saved.", { timeout: 30_000 });
+    await expect(page.getByRole("status")).toContainText("1 memory item needs a conflict decision.", { timeout: 30_000 });
+    await expect(page.getByText("Possible conflict")).toBeVisible();
+    await page.getByRole("button", { name: "Keep both" }).click();
+    await expect(page.getByRole("status")).toContainText("Both memories saved as active context.", { timeout: 30_000 });
     expect(errors).toEqual([]);
   } finally {
+    const cleanup = driver.session({ database: process.env.NEO4J_DATABASE || "neo4j" });
+    try {
+      await cleanup.run(
+        `MATCH (fact:Fact {ownerId: 'demo-owner'}) WHERE fact.text = $noteText
+         OPTIONAL MATCH (fact)-[:SUPPORTED_BY]->(source:Source)
+         DETACH DELETE fact, source`,
+        { noteText },
+      );
+    } finally {
+      await cleanup.close();
+    }
     await deleteSession(driver, fixture.sessionId);
     await driver.close();
   }

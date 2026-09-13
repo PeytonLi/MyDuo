@@ -6,7 +6,7 @@ import { AuthError, requireOperator } from "../src/lib/server/auth";
 import { getDriver, readQuery, writeQuery } from "../src/lib/server/db";
 import { elevenLabsVoices } from "../src/lib/server/env";
 import { applyRecallStatus, createMeeting, getSessionState, listMeetingSessions, MeetingError } from "../src/lib/server/meetings";
-import { createMemory, deleteMemory, getProfile, getSuggestionContext, listMemory, updateProfile } from "../src/lib/server/memory";
+import { createMemory, deleteMemory, executeGraphTool, getProfile, getSuggestionContext, listMemory, updateProfile } from "../src/lib/server/memory";
 import {
   acknowledgeCommand,
   assertApprovedAudioActive,
@@ -19,7 +19,7 @@ import {
   stopSpeech,
 } from "../src/lib/server/speech";
 import { dismissSuggestion, reserveSuggestion, setAutoSuggestionEnabled } from "../src/lib/server/suggestions";
-import { ingestTranscript, parseTranscriptEvent } from "../src/lib/server/transcripts";
+import { ingestParticipantSpeech, ingestTranscript, parseParticipantSpeechEvent, parseTranscriptEvent } from "../src/lib/server/transcripts";
 
 test("Neo4j regression: memory, webhooks, media authority, and speech state", { timeout: 60_000 }, async () => {
   const runId = randomUUID();
@@ -28,6 +28,8 @@ test("Neo4j regression: memory, webhooks, media authority, and speech state", { 
   const sessionId = randomUUID();
   const statusDeliveryId = `qa-status-${runId}`;
   const transcriptDeliveryId = `qa-transcript-${runId}`;
+  const speechOnDeliveryId = `qa-speech-on-${runId}`;
+  const speechOffDeliveryId = `qa-speech-off-${runId}`;
 
   try {
     const [firstVoice, secondVoice] = elevenLabsVoices();
@@ -51,7 +53,7 @@ test("Neo4j regression: memory, webhooks, media authority, and speech state", { 
       text: "Never expose this note.",
       allowMeetingUse: false,
     });
-    await createMemory(ownerId, {
+    const securityFact = await createMemory(ownerId, {
       kind: "fact",
       projectId: project.id,
       factKind: "dependency",
@@ -60,10 +62,30 @@ test("Neo4j regression: memory, webhooks, media authority, and speech state", { 
       ownerName: "Morgan",
       dependsOnFactIds: [],
     });
+    const launchFact = await createMemory(ownerId, {
+      kind: "fact",
+      projectId: project.id,
+      factKind: "deadline",
+      text: "The public launch is scheduled for Friday after security approval.",
+      sourceIds: [publicSource.id],
+      ownerName: "Alex",
+      dependsOnFactIds: [securityFact.id],
+    });
     const memory = await listMemory(ownerId, project.id);
     assert.equal(memory.projects.length, 1);
     assert.equal(memory.sources.length, 2);
-    assert.equal(memory.facts.length, 1);
+    assert.equal(memory.facts.length, 2);
+    const graphSearch = await executeGraphTool(ownerId, project.id, {
+      name: "search_project_knowledge", query: "Friday launch security", limit: 5,
+    });
+    assert.ok(graphSearch.facts.some((fact) => fact.id === launchFact.id));
+    assert.ok(graphSearch.evidence.some((item) => item.id === publicSource.id));
+    const dependencyPath = await executeGraphTool(ownerId, project.id, {
+      name: "trace_dependencies", factIds: [launchFact.id], depth: 3,
+    });
+    assert.ok(dependencyPath.facts.some((fact) => fact.id === securityFact.id));
+    assert.ok(dependencyPath.reasoningPath.edges.some((edge) =>
+      edge.from === launchFact.id && edge.to === securityFact.id && edge.type === "DEPENDS_ON"));
 
     const previousBaseUrl = process.env.APP_BASE_URL;
     delete process.env.APP_BASE_URL;
@@ -240,6 +262,28 @@ test("Neo4j regression: memory, webhooks, media authority, and speech state", { 
     assert.ok(approvedExample.get("approvedAt"));
     await updateProfile(ownerId, { ...profile, selectedVoiceId: secondVoice.id });
 
+    const speechEvent = (event: "participant_events.speech_on" | "participant_events.speech_off", absolute: string) =>
+      parseParticipantSpeechEvent({
+        event,
+        data: {
+          data: {
+            participant: { id: "person-1", name: "Alex" },
+            timestamp: { absolute, relative: 3 },
+            data: null,
+          },
+          bot: { id: providerBotId },
+        },
+      });
+    assert.deepEqual(
+      await ingestParticipantSpeech(speechOnDeliveryId, speechEvent("participant_events.speech_on", "2026-09-12T12:00:03Z")),
+      { knownSession: true, duplicate: false, speakingCount: 1 },
+    );
+    assert.equal((await heartbeatAndClaim(mediaTokenHash, sessionId)).command, null, "speech must wait while a participant has the floor");
+    assert.deepEqual(
+      await ingestParticipantSpeech(speechOffDeliveryId, speechEvent("participant_events.speech_off", "2026-09-12T12:00:04Z")),
+      { knownSession: true, duplicate: false, speakingCount: 0 },
+    );
+
     const claimed = await heartbeatAndClaim(mediaTokenHash, sessionId);
     assert.equal(claimed.command?.id, queued.id);
     assert.equal(claimed.command?.status, "claimed");
@@ -250,9 +294,20 @@ test("Neo4j regression: memory, webhooks, media authority, and speech state", { 
     );
     assert.deepEqual(await prepareApprovedAudio(mediaTokenHash, sessionId, queued.id), { text: approval.approvedText, voiceId: firstVoice.id });
     await assert.doesNotReject(() => assertApprovedAudioActive(mediaTokenHash, sessionId, queued.id));
+    assert.equal((await acknowledgeCommand(mediaTokenHash, sessionId, { commandId: queued.id, status: "playing" })).status, "playing");
     assert.equal((await acknowledgeCommand(mediaTokenHash, sessionId, { commandId: queued.id, status: "completed" })).status, "completed");
     assert.equal((await acknowledgeCommand(mediaTokenHash, sessionId, { commandId: queued.id, status: "playing" })).status, "completed");
     assert.equal((await acknowledgeCommand(mediaTokenHash, sessionId, { commandId: queued.id, status: "completed" })).status, "completed");
+    const speechTiming = await readQuery(async (tx) => {
+      const result = await tx.run(
+        "MATCH (c:SpeechCommand {id: $commandId}) RETURN c.preparedAt AS preparedAt, c.playingAt AS playingAt, c.completedAt AS completedAt",
+        { commandId: queued.id },
+      );
+      return result.records[0];
+    });
+    assert.ok(speechTiming.get("preparedAt"));
+    assert.ok(speechTiming.get("playingAt"));
+    assert.ok(speechTiming.get("completedAt"));
 
     const secondSuggestionId = randomUUID();
     await writeQuery(async (tx) => {
@@ -332,9 +387,17 @@ test("Neo4j regression: memory, webhooks, media authority, and speech state", { 
       await tx.run(
         `MATCH (n)
          WHERE n.ownerId = $ownerId OR n.sessionId = $sessionId OR n.scopedSessionId = $sessionId
-            OR n.id IN [$statusDeliveryId, $transcriptDeliveryId, $staleStatusDeliveryId]
+            OR n.id IN [$statusDeliveryId, $transcriptDeliveryId, $staleStatusDeliveryId, $speechOnDeliveryId, $speechOffDeliveryId]
          DETACH DELETE n`,
-        { ownerId, sessionId, statusDeliveryId, transcriptDeliveryId, staleStatusDeliveryId: `qa-stale-status-${runId}` },
+        {
+          ownerId,
+          sessionId,
+          statusDeliveryId,
+          transcriptDeliveryId,
+          staleStatusDeliveryId: `qa-stale-status-${runId}`,
+          speechOnDeliveryId,
+          speechOffDeliveryId,
+        },
       );
     });
   }

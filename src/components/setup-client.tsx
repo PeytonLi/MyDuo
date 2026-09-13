@@ -32,6 +32,18 @@ type MeetingSummary = {
   transcriptCount: number;
   reviewState: "none" | "pending" | "complete";
 };
+type QualityDashboard = {
+  tracedDrafts: number;
+  completionRate: number;
+  groundedRate: number;
+  approvalRate: number;
+  averageEditDistance: number;
+  averageGraphHops: number;
+  generationP50Ms: number | null;
+  generationP95Ms: number | null;
+  approvalToAudioP50Ms: number | null;
+  approvalToAudioP95Ms: number | null;
+};
 
 const emptyProfile: Profile = { role: "", priorities: "", tone: "Clear and concise", responseExamples: "", selectedVoiceId: "" };
 
@@ -50,6 +62,7 @@ export function SetupClient() {
   const [projectId, setProjectId] = useState("");
   const [voices, setVoices] = useState<VoiceOption[]>([]);
   const [meetings, setMeetings] = useState<MeetingSummary[]>([]);
+  const [quality, setQuality] = useState<QualityDashboard | null>(null);
   const [previewingVoiceId, setPreviewingVoiceId] = useState("");
   const [previewVoiceId, setPreviewVoiceId] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
@@ -57,14 +70,15 @@ export function SetupClient() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    Promise.all([api<Profile>("/api/profile"), api<Memory>("/api/memory"), api<VoiceOption[]>("/api/voices"), api<MeetingSummary[]>("/api/sessions")])
-      .then(([savedProfile, memory, availableVoices, recentMeetings]) => {
+    Promise.all([api<Profile>("/api/profile"), api<Memory>("/api/memory"), api<VoiceOption[]>("/api/voices"), api<MeetingSummary[]>("/api/sessions"), api<QualityDashboard>("/api/quality")])
+      .then(([savedProfile, memory, availableVoices, recentMeetings, qualityDashboard]) => {
         setProfile({ ...emptyProfile, ...savedProfile });
         setVoices(availableVoices);
         setSources(memory.sources ?? []);
         setProjects(memory.projects ?? []);
         setProjectId(memory.projects?.[0]?.id ?? "");
         setMeetings(recentMeetings);
+        setQuality(qualityDashboard);
         setSignedIn(true);
       })
       .catch(() => setSignedIn(false));
@@ -298,6 +312,22 @@ export function SetupClient() {
       </section>
 
       {message && <div className="toast" role="status">{message}</div>}
+
+      {quality && quality.tracedDrafts > 0 && (
+        <section className="quality-dashboard" aria-labelledby="quality-dashboard-title">
+          <div className="history-heading">
+            <div><p className="section-kicker">Measured system behavior</p><h2 id="quality-dashboard-title">Technical evidence</h2></div>
+            <span>Last {quality.tracedDrafts} traced draft{quality.tracedDrafts === 1 ? "" : "s"}</span>
+          </div>
+          <div className="quality-metrics">
+            <div><strong>{Math.round(quality.groundedRate * 100)}%</strong><span>grounded drafts</span></div>
+            <div><strong>{quality.averageGraphHops.toFixed(1)}</strong><span>graph hops / draft</span></div>
+            <div><strong>{Math.round(quality.approvalRate * 100)}%</strong><span>approved</span></div>
+            <div><strong>{quality.generationP50Ms === null ? "—" : `${quality.generationP50Ms} ms`}</strong><span>median draft time</span></div>
+            <div><strong>{quality.approvalToAudioP50Ms === null ? "—" : `${quality.approvalToAudioP50Ms} ms`}</strong><span>median approval to voice</span></div>
+          </div>
+        </section>
+      )}
 
       {meetings.length > 0 && (
         <section className="meeting-history" aria-labelledby="meeting-history-title">
