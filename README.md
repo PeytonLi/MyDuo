@@ -19,8 +19,6 @@ Built solo, end to end.
 
 **Demo video: <https://youtu.be/Vq5zroJmaJk>**
 
-[docs/DEMO-GUIDE.md](docs/DEMO-GUIDE.md) has the full live script: what to say, what your teammate says, and recovery lines for when things go off-script.
-
 A live deployment is running at <https://myduo-daqq.onrender.com> (access-protected).
 
 ## External apps used
