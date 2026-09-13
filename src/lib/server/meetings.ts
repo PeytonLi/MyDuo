@@ -299,6 +299,16 @@ export async function createMeeting(ownerId: string, input: { meetingUrl: string
   return getSessionState(ownerId, reserved.sessionId);
 }
 
+async function recallBotSettled(botId: string) {
+  try {
+    const bot = await retrieveRecallBot(botId);
+    const status = latestRecallStatus(bot)?.status;
+    return status === "ended" || status === "failed";
+  } catch {
+    return false;
+  }
+}
+
 export async function endMeeting(ownerId: string, sessionId: string) {
   const known = await readQuery(async (tx) => {
     const result = await tx.run(
@@ -345,23 +355,27 @@ export async function endMeeting(ownerId: string, sessionId: string) {
 
   try {
     if (botId && !providerEnded) await removeRecallBot(botId);
-    await writeQuery(async (tx) => {
-      await tx.run(`MATCH (s:Session {id: $sessionId, ownerId: $ownerId}) SET s.status = 'ended', s.updatedAt = $now`, {
-        sessionId,
-        ownerId,
-        now: new Date().toISOString(),
-      });
-    });
   } catch (error) {
-    await writeQuery(async (tx) => {
-      await tx.run(`MATCH (s:Session {id: $sessionId, ownerId: $ownerId}) SET s.status = 'uncertain', s.updatedAt = $now`, {
-        sessionId,
-        ownerId,
-        now: new Date().toISOString(),
+    // A bot that never joined (still fatal from a bad link, or already done) rejects
+    // leave_call; ending the session must still succeed or the active-session lock wedges.
+    if (!botId || !(await recallBotSettled(botId))) {
+      await writeQuery(async (tx) => {
+        await tx.run(`MATCH (s:Session {id: $sessionId, ownerId: $ownerId}) SET s.status = 'uncertain', s.updatedAt = $now`, {
+          sessionId,
+          ownerId,
+          now: new Date().toISOString(),
+        });
       });
-    });
-    throw error;
+      throw error;
+    }
   }
+  await writeQuery(async (tx) => {
+    await tx.run(`MATCH (s:Session {id: $sessionId, ownerId: $ownerId}) SET s.status = 'ended', s.updatedAt = $now`, {
+      sessionId,
+      ownerId,
+      now: new Date().toISOString(),
+    });
+  });
   return getSessionState(ownerId, sessionId);
 }
 
