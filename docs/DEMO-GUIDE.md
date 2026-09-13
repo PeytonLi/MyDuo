@@ -39,6 +39,106 @@ RETURN path
 
 The handoff connects to sound mix, picture lock, the purchase order, music licensing, product capture, legal approval, and executive review.
 
+## Three-minute full script (runs inside Google Meet)
+
+Two windows side by side: Google Meet and the deployed workspace. The live demo happens in the Meet side panel; the workspace window is for the audit trail, review, and metrics.
+
+**Setup (5 minutes before, none on camera):**
+
+1. Start the Meet call. Teammate in. Admit the visible MyDuo bot.
+2. Workspace window (normal browser tab): logged in, Northstar selected, **Auto-suggest off**, meeting page open.
+3. In Meet: open **Activities → MyDuo** so the side panel is showing "Pair with your active session."
+4. Neo4j tab: SUPERSEDES query (below) typed but **not run**.
+5. Brief the teammate on their lines — each one appears in the script where they say it. Tell them: speak naturally, keep talking through sentence endings, otherwise stay quiet.
+
+### Step 1 — The problem and the pairing (0:00–0:40)
+
+**YOU SAY** (over the Meet view, teammate quiet):
+
+> Every meeting produces decisions, deadlines, and commitments — and most of them evaporate. Transcripts sit unread, notes go stale, and current AI assistants either record everything into summaries nobody opens or interrupt whenever they feel like it. MyDuo is a private copilot for the person running the meeting: it listens, remembers in a graph you can audit, and only speaks the exact words I approve.
+
+**YOU DO:** In the workspace window, click **Meet side panel** — a 10-letter code appears. Type it into the Meet panel and click **Pair panel**. The live transcript appears in the panel.
+
+**YOU SAY:**
+
+> MyDuo is a Google Meet add-on. I paired this panel with a one-use code from my workspace — it's mine alone, nobody else on the call can see it. Behind it is this team's working memory: a Neo4j graph of owners, deadlines, and dependencies, all linked to source documents.
+
+### Step 2 — The core loop, inside Meet (0:40–1:45)
+
+**TEAMMATE SAYS:**
+
+> Maya's edit is nearly done, but legal hasn't cleared the customer quote yet. Are we still on track for the October 8 handoff — and what's our fallback if legal slips?
+
+**YOU DO:** Watch it land in the panel transcript. In the panel, pick **Answer** → **Draft privately**.
+
+**YOU SAY** (while it drafts, ~10 s):
+
+> No prompt box — it heard the question. It's privately drafting from the project's memory graph, and nothing reaches the call.
+
+**TEAMMATE SAYS** (slowly, trailing off — this is still while the draft is generating):
+
+> I just don't want to promise the client a date we can't hit.
+
+The draft appears with **Responding to** the teammate's question. It should name Elena Ruiz's October 6 legal approval, Maya Chen's edit, and the backup cut as the fallback.
+
+**YOU SAY:**
+
+> It grounded the answer in the graph — the approval owner, the date, the fallback plan.
+
+**YOU DO:** Make one small edit in **Suggested words**. Click **Speak to meeting** while the teammate is still finishing their trailing sentence. Point at the wait.
+
+**YOU SAY:**
+
+> I control the exact words. And it waits for a clear moment — it will not talk over people.
+
+The teammate finishes; the approved speech plays to the call.
+
+### Step 3 — The audit trail (1:45–2:00)
+
+**YOU DO:** Switch to the workspace window — same session, same draft. Open **Technical trace** beneath the draft.
+
+**YOU SAY:**
+
+> Same draft, full audit trail: which graph tools it called, the evidence hops, latency, even token counts. The model can't write its own database queries — it picks from four fixed tools.
+
+### Step 4 — Capture the date change (2:00–2:20)
+
+**TEAMMATE SAYS:**
+
+> Also, heads up — the final video deadline moved from October 8 to October 9 at 2:00 PM.
+
+**YOU DO:** In the workspace transcript, click that line. In **Quick note**, type `The final video is due October 9, 2026 at 2:00 PM Pacific.` Choose **Capture**.
+
+**YOU SAY:**
+
+> Captured with the transcript as evidence — but it's only a pending candidate. It changes nothing until a human accepts it.
+
+### Step 5 — Supersede the old deadline (2:20–2:50)
+
+**YOU DO:** **End session** → **Review meeting memory** → set the note's type to **Deadline** → check **Save this memory** → **Save accepted**. The conflict block appears — MyDuo flags the live October 8 deadline. Check the October 8 fact → **Replace selected** → switch to the Neo4j tab → run the pre-entered query.
+
+**YOU SAY:**
+
+> MyDuo caught the contradiction. The old deadline is closed, not deleted — linked to the new one with the evidence that justified the change. The next meeting answers from the new date.
+
+### Step 6 — Receipts and close (2:50–3:00)
+
+**YOU DO:** Home page, **Technical evidence** panel.
+
+**YOU SAY:**
+
+> Grounded drafts, graph hops per draft, approval rate, latency — measured from the traces of what you just watched. Not claims. Measurements. That's MyDuo — private memory, auditable reasoning, human-approved voice.
+
+**If something goes off-script:**
+
+- Panel won't pair → do everything in the workspace window; the flow is identical.
+- "The meeting changed. Review this draft…" banner → click **Still relevant — review again** and say: "The conversation moved, so it asks me to confirm. Safety, not friction."
+- No conflict block at step 5 → the note still saved; say the human-review line and skip the Neo4j query.
+- Draft shows no tool calls → "The tools are optional — it answered from direct context here."
+- Anything hangs → **End session** always works, and the review close is the strongest finish.
+
+Cut from the six-minute script: the spoken Neo4j narration, the Find context and Suggest a question steps, and the Stop rehearsal. If you find 30 spare seconds, flash the pre-run critical-path query right before step 1.
+
 ## Six-minute live script
 
 ### 1. Watch the graph answer a dependency question
