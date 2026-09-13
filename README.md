@@ -17,7 +17,7 @@ Built solo, end to end, with [Qoder](https://qoder.com).
 
 ## Two-minute demo
 
-**Demo video: <https://www.loom.com/share/d86ba9901194486a827831a35bcc3608>**
+**Demo video: <https://youtu.be/Vq5zroJmaJk>**
 
 The full live script — including what to say, what your teammate says, and recovery lines for when things go off-script — is in [docs/DEMO-GUIDE.md](docs/DEMO-GUIDE.md).
 
