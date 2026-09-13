@@ -59,6 +59,7 @@ async function withSession(driver: Driver) {
          id: $suggestionId, ownerId: 'demo-owner', sessionId: $sessionId,
          version: 1, mode: 'answer', text: 'The public launch waits for the security review.',
          evidenceIds: [], evidenceJson: '[]', basis: 'notes', transcriptRevision: 1,
+         responseTargetJson: $responseTargetJson,
          status: 'ready', createdAt: $now
        })
        CREATE (s)-[:HAS_SUGGESTION]->(g)`,
@@ -69,6 +70,7 @@ async function withSession(driver: Driver) {
         suggestionId,
         now: new Date().toISOString(),
         mediaLastSeenAt: new Date(Date.now() + 60_000).toISOString(),
+        responseTargetJson: JSON.stringify([{ id: utteranceId, speakerName: "Alex", text: "Can the public launch happen Friday?" }]),
       },
     );
   } finally {
@@ -187,9 +189,15 @@ test("meeting draft edits, stale protection, and end state survive polling", asy
   const fixture = await withSession(driver);
   try {
     await login(page);
+    const activeMeeting = page.locator(".history-item").first();
+    await expect(page.getByRole("heading", { name: "Recent meetings" })).toBeVisible();
+    await expect(activeMeeting).toContainText("listening");
+    await expect(activeMeeting.getByRole("button", { name: "Resume" })).toBeVisible();
     await page.goto(`/meeting/${fixture.sessionId}`);
     await expect(page.getByRole("heading", { name: "Transcript" })).toBeVisible();
-    await expect(page.getByText("Can the public launch happen Friday?")).toBeVisible();
+    await expect(page.locator(".utterance", { hasText: "Can the public launch happen Friday?" })).toBeVisible();
+    await expect(page.locator(".response-target")).toContainText("Responding to");
+    await expect(page.locator(".response-target")).toContainText("Can the public launch happen Friday?");
     const draft = page.getByLabel("Suggested words");
     await expect(draft).toHaveValue("The public launch waits for the security review.");
     await draft.fill("The public launch waits for the completed security review.");
@@ -204,6 +212,8 @@ test("meeting draft edits, stale protection, and end state survive polling", asy
     }
     await expect(page.locator(".stale-warning")).toContainText("conversation moved on", { timeout: 5_000 });
     await expect(page.getByRole("button", { name: "Speak to meeting" })).toBeDisabled();
+    await page.getByRole("button", { name: "Still relevant — review again" }).click();
+    await expect(page.getByRole("button", { name: "Speak to meeting" })).toBeEnabled();
     await page.getByRole("button", { name: "End session" }).click();
     await expect(page.getByText("ended", { exact: true })).toBeVisible();
     expect(errors).toEqual([]);
@@ -256,8 +266,9 @@ test("ended meeting review saves curated memory", async ({ page }) => {
   const fixture = await withEndedReviewSession(driver);
   try {
     await login(page);
-    await page.goto(`/meeting/${fixture.sessionId}`);
-    await page.getByRole("link", { name: "Review meeting memory" }).click();
+    const recentMeeting = page.locator(".history-item", { hasText: "Browser review regression" });
+    await expect(recentMeeting).toBeVisible();
+    await recentMeeting.getByRole("link", { name: "Review memory" }).click();
     await expect(page.getByRole("heading", { name: "What should MyDuo remember?" })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Memory", exact: true })).toHaveValue("The integration ships after the audit.");
     await page.getByLabel("Save this memory").check();
@@ -283,7 +294,7 @@ test("quick note captures during the meeting and surfaces in review", async ({ p
     await page.goto(`/meeting/${fixture.sessionId}`);
     const noteBox = page.getByLabel("Quick note saved for review after the meeting");
     await expect(noteBox).toBeVisible();
-    await page.getByText("Can the public launch happen Friday?").click();
+    await page.locator(".utterance", { hasText: "Can the public launch happen Friday?" }).click();
     await noteBox.fill("Alex asked about the Friday launch.");
     await page.getByRole("button", { name: "Capture" }).click();
     await expect(page.getByRole("status")).toContainText("Note captured with 1 selected line");

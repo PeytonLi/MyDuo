@@ -30,6 +30,7 @@ export function MeetingClient({ sessionId }: { sessionId: string }) {
   const [selected, setSelected] = useState<string[]>([]);
   const [mode, setMode] = useState<Mode>("answer");
   const [draftEdit, setDraftEdit] = useState<{ suggestionId: string; text: string } | null>(null);
+  const [reviewedDraft, setReviewedDraft] = useState<{ suggestionId: string; revision: number } | null>(null);
   const [busy, setBusy] = useState<"suggest" | "save" | "speak" | "stop" | "end" | "note" | null>(null);
   const [autoState, setAutoState] = useState<AutoSuggestionState | null>(null);
   const [autoBusy, setAutoBusy] = useState(false);
@@ -74,7 +75,8 @@ export function MeetingClient({ sessionId }: { sessionId: string }) {
 
   const suggestion = session?.currentSuggestion;
   const draft = draftEdit && draftEdit.suggestionId === suggestion?.id ? draftEdit.text : suggestion?.text ?? "";
-  const isStale = Boolean(suggestion && session && suggestion.transcriptRevision < session.transcriptRevision);
+  const isStale = Boolean(suggestion && session && suggestion.transcriptRevision < session.transcriptRevision
+    && (reviewedDraft?.suggestionId !== suggestion.id || reviewedDraft.revision !== session.transcriptRevision));
   const canSpeak = Boolean(suggestion && session?.mediaReady && draft.trim() && !session.activeSpeech && !isStale);
   const transcript = useMemo(() => session?.recentUtterances ?? [], [session]);
 
@@ -118,6 +120,7 @@ export function MeetingClient({ sessionId }: { sessionId: string }) {
       });
       setSession((current) => current ? { ...current, currentSuggestion: next } : current);
       setDraftEdit(null);
+      setReviewedDraft(null);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not create a suggestion.");
     } finally {
@@ -203,9 +206,16 @@ export function MeetingClient({ sessionId }: { sessionId: string }) {
       await api(`/api/suggestions/${suggestion.id}`, { method: "DELETE" });
       setSession((current) => current ? { ...current, currentSuggestion: null } : current);
       setDraftEdit(null);
+      setReviewedDraft(null);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not dismiss this draft.");
     }
+  }
+
+  function reviewStaleDraft() {
+    if (!session || !suggestion) return;
+    setReviewedDraft({ suggestionId: suggestion.id, revision: session.transcriptRevision });
+    setMessage("Draft reviewed against the latest conversation. It is ready to speak.");
   }
 
   async function speak() {
@@ -314,11 +324,15 @@ export function MeetingClient({ sessionId }: { sessionId: string }) {
           {suggestion ? (
             <article className="suggestion-card">
               <div className="suggestion-meta"><span>{suggestion.trigger === "auto" ? "Automatic question" : suggestion.mode}</span><time>{new Date(suggestion.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</time></div>
+              <div className="response-target">
+                <p>Responding to{suggestion.responseTargets.length === 0 ? " the latest conversation" : ""}</p>
+                {suggestion.responseTargets.map((target) => <blockquote key={target.id}><strong>{target.speakerName}</strong><span>“{target.text}”</span></blockquote>)}
+              </div>
               <label htmlFor="draft">Suggested words</label>
               <textarea id="draft" className="draft-text" value={draft} onChange={(event) => setDraftEdit({ suggestionId: suggestion.id, text: event.target.value })} maxLength={600} rows={6} />
               <div className="character-count">{draft.length}/600</div>
 
-              {isStale && <p className="stale-warning" role="alert">The conversation moved on. Create a fresh draft before speaking.</p>}
+              {isStale && <div className="stale-warning" role="alert"><p>The conversation moved on. Review this draft once more before speaking.</p><button className="text-button" type="button" onClick={reviewStaleDraft}>Still relevant — review again</button></div>}
 
               <div className="evidence-block">
                 <p className="evidence-label">{suggestion.basis === "needs_context" ? "Needs more context" : suggestion.basis === "meeting" ? "Based on this meeting" : suggestion.basis === "notes" ? "Supported by your notes" : "Supported by notes and meeting"}</p>

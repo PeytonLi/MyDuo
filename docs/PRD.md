@@ -22,7 +22,7 @@ Combine a live meeting transcript with a small, user-confirmed knowledge graph a
 
 The contribution appears in a private web panel. The user reads it, edits it, dismisses it, or selects **Speak to meeting**. ElevenLabs creates the voice, and Recall.ai carries it into the call.
 
-“Thinks like you” means using your supplied context, priorities, tone, and examples of your writing. It is not a claim to reproduce a person's beliefs or judgment. The assistant should surface contrary evidence when appropriate, and should not invent support simply to agree with the user.
+“Thinks like you” means using your supplied context, priorities, tone, examples of your writing, and a bounded set of recent generated-to-approved edits. It is not a claim to reproduce a person's beliefs or judgment. The assistant should surface contrary evidence when appropriate, and should not invent support simply to agree with the user.
 
 ## 3. Value proposition
 
@@ -83,9 +83,9 @@ The operator pastes a Google Meet URL and confirms participants are aware the AI
 
 ### During the meeting
 
-The panel shows bot status, the recent transcript, and a selected assistance mode. The operator can select a transcript utterance or enter a short clarification such as “Help me explain the deadline.” The backend retrieves relevant confirmed memory and creates a suggestion.
+The panel shows bot status, the recent transcript, and a selected assistance mode. The operator can select up to ten transcript utterances as the response focus. When nothing is selected, MyDuo uses the latest relevant conversation. The backend retrieves relevant confirmed memory and creates a suggestion.
 
-Only one current suggestion needs prominent placement. The card includes the triggering question, proposed text, evidence, generation time, and controls. A small history can retain recent cards without becoming a second chat application.
+Only one current suggestion needs prominent placement. The card includes a **Responding to…** snapshot, proposed text, evidence, generation time, and controls. A newer transcript revision requires the operator to review the existing draft again or create a new one before speaking.
 
 Example layout:
 
@@ -109,9 +109,13 @@ Evidence: Tuesday planning notes · confirmed decision
 
 Editing produces a new suggestion version. Approval binds to that exact version and text. New conversation arriving while generation is running must not silently replace the user's selected question or edit.
 
+When approved wording differs from the generated wording, MyDuo retains the pair as a style example. Future prompts may receive up to three recent pairs as style-only data; their facts are never treated as evidence for the current meeting.
+
 The user can also simply read the draft and speak themselves. No voice generation is necessary in that case.
 
 ### Ending the meeting
+
+The home page lists active or uncertain sessions with Resume and End controls, plus recently ended meetings that are ready for memory review. An uncertain Recall creation is reconciled by stored bot ID or session metadata before the session is resumed or ended.
 
 End session cancels pending speech, requests bot removal, revokes bot-page access, and stops new assistance requests. The panel reports whether the provider has confirmed departure. The operator can clear session data; provider-held recordings require separate deletion handling described in the architecture and test plan.
 

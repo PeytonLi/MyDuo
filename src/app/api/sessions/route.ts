@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { assertMutationOrigin, requireOperator } from "@/lib/server/auth";
-import { createMeeting, meetingErrorResponse } from "@/lib/server/meetings";
+import { createMeeting, listMeetingSessions, meetingErrorResponse } from "@/lib/server/meetings";
 
 export const runtime = "nodejs";
 
@@ -9,6 +9,15 @@ const createSessionSchema = z.object({
   consentConfirmed: z.literal(true),
   projectId: z.string().uuid().optional(),
 });
+
+export async function GET(request: Request) {
+  try {
+    const { ownerId } = await requireOperator(request);
+    return Response.json(await listMeetingSessions(ownerId), { headers: { "Cache-Control": "private, no-store" } });
+  } catch (error) {
+    return meetingErrorResponse(error);
+  }
+}
 
 export async function POST(request: Request) {
   try {

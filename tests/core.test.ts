@@ -4,7 +4,7 @@ import test from "node:test";
 import { assistanceRequestSchema, approvalRequestSchema } from "../src/lib/contracts";
 import { assertMutationOrigin, AuthError, consumeLoginAttempt, resetLoginAttempts } from "../src/lib/server/auth";
 import { parsePairingCode } from "../src/lib/server/addon";
-import { normalizeMeetingUrl, parseStatusEvent } from "../src/lib/server/meetings";
+import { latestRecallStatus, normalizeMeetingUrl, parseStatusEvent, recallStatusFromCode, reviewStateForMeeting } from "../src/lib/server/meetings";
 import { boundEvidence } from "../src/lib/server/memory";
 import { verifyRecallWebhook } from "../src/lib/server/recall";
 import { consumeVoicePreview, mediaTokenFrom, parseAcknowledgement } from "../src/lib/server/speech";
@@ -146,4 +146,25 @@ test("voice previews are rate limited per operator", () => {
 test("Recall status payloads require the provider envelope", () => {
   assert.equal(parseStatusEvent({ event: "bot.done", data: { data: { updated_at: "2026-09-12T12:00:00Z" }, bot: { id: "bot-1", metadata: {} } } }).event, "bot.done");
   assert.throws(() => parseStatusEvent({ event: "bot.done", data: { bot: { id: "bot-1" } } }));
+});
+
+test("Recall recovery uses the newest provider status even when history is out of order", () => {
+  assert.deepEqual(recallStatusFromCode("bot.in_call_recording"), { status: "listening", rank: 2 });
+  assert.deepEqual(latestRecallStatus({
+    id,
+    metadata: {},
+    status: "joining_call",
+    statusChanges: [
+      { code: "done", subCode: null, createdAt: "2026-09-12T12:30:00Z" },
+      { code: "in_waiting_room", subCode: null, createdAt: "2026-09-12T12:00:00Z" },
+    ],
+  }), { status: "ended", rank: 4, updatedAt: "2026-09-12T12:30:00Z", errorCode: null });
+});
+
+test("meeting history flags only unfinished transcript review", () => {
+  assert.equal(reviewStateForMeeting("listening", 4, "", 0), "none");
+  assert.equal(reviewStateForMeeting("ended", 0, "", 0), "none");
+  assert.equal(reviewStateForMeeting("ended", 4, "", 0), "pending");
+  assert.equal(reviewStateForMeeting("ended", 4, "ready", 1), "pending");
+  assert.equal(reviewStateForMeeting("ended", 4, "ready", 0), "complete");
 });

@@ -3,7 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import neo4j, { type ManagedTransaction, type Record as Neo4jRecord } from "neo4j-driver";
 import { z } from "zod";
-import type { AssistanceRequest, Evidence } from "@/lib/contracts";
+import type { AssistanceRequest, Evidence, ResponseTarget } from "@/lib/contracts";
 import { readQuery, writeQuery } from "./db";
 import { allowedVoice, elevenLabsVoices } from "./env";
 
@@ -348,6 +348,8 @@ export type SuggestionContext = {
   transcriptRevision: number;
   evidence: Evidence[];
   selectedUtteranceIds: string[];
+  responseTargets: ResponseTarget[];
+  learnedEdits: { draft: string; approved: string }[];
 };
 
 export function boundEvidence(evidence: Evidence[], maxCharacters = 12_000) {
@@ -412,6 +414,15 @@ export async function getSuggestionContext(
       occurredAt: null,
       factIds: [],
     }));
+    const utteranceTargets = utteranceRecords.map((r) => ({
+      id: string(r, "id"),
+      speakerName: string(r, "speakerName"),
+      text: string(r, "text"),
+    }));
+    const selectedTargetIds = new Set(request.selectedUtteranceIds);
+    const responseTargets = request.selectedUtteranceIds.length
+      ? utteranceTargets.filter((item) => selectedTargetIds.has(item.id))
+      : utteranceTargets.slice(-1);
 
     const projectId = string(session, "projectId");
     const factResult = await tx.run(
@@ -445,10 +456,26 @@ export async function getSuggestionContext(
       };
     });
 
+    const editResult = await tx.run(
+      `MATCH (suggestion:Suggestion {ownerId: $ownerId, status: 'approved'})
+       WHERE suggestion.generatedText IS NOT NULL
+         AND suggestion.approvedText IS NOT NULL
+         AND suggestion.generatedText <> suggestion.approvedText
+       RETURN suggestion.generatedText AS draft, suggestion.approvedText AS approved
+       ORDER BY suggestion.approvedAt DESC
+       LIMIT 3`,
+      { ownerId },
+    );
+
     return {
       projectName: string(session, "projectName"),
       transcriptRevision,
       selectedUtteranceIds: request.selectedUtteranceIds,
+      responseTargets,
+      learnedEdits: editResult.records.map((record) => ({
+        draft: string(record, "draft"),
+        approved: string(record, "approved"),
+      })),
       profile: {
         role: string(session, "role"),
         priorities: string(session, "priorities"),

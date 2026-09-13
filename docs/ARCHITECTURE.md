@@ -89,13 +89,13 @@ Recall distinguishes realtime endpoint events from status delivery. Current veri
 
 ### 4.3 Suggestion generation
 
-1. Receive mode, selected utterance IDs or operator question, and observed transcript revision.
-2. Capture an immutable context snapshot: selected question, recent committed utterances, selected project, and allowed profile fields.
+1. Receive the assistance mode, selected utterance IDs, and observed transcript revision.
+2. Capture an immutable context snapshot: selected transcript focus, recent committed utterances, selected project, allowed profile fields, and at most three recent generated-to-approved wording examples.
 3. Retrieve a bounded set of confirmed, non-superseded facts from the selected project with their supporting sources. Exclude sources that are not enabled for meeting use before sending context to the model.
 4. Use fixed parameterized Cypher. Start with selected-project retrieval and a one/two-hop expansion for owners/dependencies; no LLM-written Cypher and no embedding pipeline.
 5. Submit bounded context to one DeepSeek model in JSON output mode, with explicit schema instructions in the prompt. Use recent transcript as data, not instructions. The model receives no tool for approving speech, changing memory, or fetching arbitrary URLs.
 6. Validate result shape and ensure all evidence IDs belong to the supplied source/utterance set. Refusal, malformed output, missing evidence, and timeout are handled explicitly.
-7. Store the draft with revision, version, and evidence references. Return it privately. Do not save generated assertions as confirmed memory.
+7. Store the draft with revision, version, evidence references, its transcript focus, and its original generated wording. Return it privately. Do not save generated assertions as confirmed memory.
 
 DeepSeek's JSON output mode constrains the response to JSON, while the application schema validator enforces the expected fields and evidence IDs. Neither establishes factual correctness. [DeepSeek JSON output](https://api-docs.deepseek.com/guides/json_mode).
 
@@ -108,8 +108,8 @@ Initial context limits: last 5 minutes or 40 utterances, whichever is smaller; a
 3. The media page polls at an initial 500 ms interval and atomically claims the queued command. A second page cannot claim it again.
 4. The media page requests audio for the claimed command. The backend verifies command state and media authority and calls ElevenLabs using only the stored approved text. The media client cannot supply arbitrary TTS text.
 5. For the first working version, receive a short complete MP3 through the protected backend route, create an in-browser object URL, and play it. This intentionally buffers the short response and avoids a custom audio streaming pipeline. If measured latency misses the PRD target, implement streaming playback inside this same page.
-6. Report playback started, ended, or failed using the command ID. The operator sees preparing, speaking, completed, or error. Revoke object URLs after use.
-7. No automatic playback retry follows a lost acknowledgement or page crash. Mark the outcome uncertain and require a new operator action, since exactly-once audible output cannot be guaranteed across network failures.
+6. Report playback started, ended, or failed using the command ID. Acknowledgements are idempotent and retried after temporary connection failures. The operator sees preparing, speaking, completed, or error. Revoke object URLs after use.
+7. Do not replay audio after a lost acknowledgement or page crash. The media page may retry only the state acknowledgement; exactly-once audible output cannot be guaranteed across a page crash.
 
 Audio bytes are not stored in Neo4j or public files. A disconnected synthesis/playback request fails or becomes uncertain instead of becoming an untracked background job.
 
@@ -117,10 +117,11 @@ Use Recall **Output Media** for this flow. Recall runs a webpage and outputs its
 
 ### 4.5 Stop, end, and recovery
 
-- Stop atomically cancels active/pending commands and increments a session stop revision. The media page pauses audio, clears its buffer, and acknowledges the revision on the next poll.
-- The backend also requests Recall Output Media to stop as a fallback when the page is unreachable. Starting media again requires a fresh valid media session and must not replay old commands.
-- A Stop requested state is distinct from Stop confirmed. If the transport fails, show that the user may need to mute/remove the visible bot in Meet.
+- Stop atomically cancels active/pending commands and increments a session stop revision. The media page keeps polling during synthesis, aborts its audio request, pauses playback, and clears its buffer when the revision advances.
+- The protected audio route rechecks that the command is still active after ElevenLabs returns. Audio completed after Stop receives no playable response and cannot begin late.
+- Playback acknowledgements are safe to retry. Active commands expire and release the session if the media page disappears.
 - End cancels commands and requests bot removal. Revoke media credentials immediately; confirm actual departure from provider status/reconciliation.
+- The home page lists active and uncertain sessions. Recovery looks up the Recall bot by its stored ID or session metadata before offering Resume; End does not silently abandon an unresolved bot.
 - No heartbeat for 5 seconds marks media unavailable and disables new speech. Lost transcript delivery is diagnosed using provider endpoint/session status and an operator reconnect action; silence alone is not evidence of failure.
 - A server restart preserves database state. In-flight generation/speech is reconciled to failed/uncertain, never replayed automatically.
 
@@ -148,7 +149,7 @@ Dates remain explicit: ingestion time is not the date of the underlying decision
 | --- | --- |
 | Session | id, ownerId, projectId, meetingUrl, providerBotId, status, transcriptRevision, stopRevision, mediaLastSeenAt, activeSpeechId, timestamps |
 | Utterance | id, sessionId, providerEventId, providerUtteranceId if available, speakerId/name, text, startMs/endMs, revision, isBot |
-| Suggestion | id, sessionId, mode, version, text, evidenceIds, transcriptRevision, status, createdAt |
+| Suggestion | id, sessionId, mode, version, text, generatedText, approvedText, responseTargetJson, evidenceIds, transcriptRevision, status, timestamps |
 | SpeechCommand | id, sessionId, clientRequestId, suggestionId/version, approvedText, reviewedTranscriptRevision, status, expiresAt, timestamps |
 | AccessSession | tokenHash, ownerId or scoped sessionId, kind (operator/media), expiresAt |
 
@@ -164,9 +165,9 @@ Create these as TypeScript types and boundary schemas in Phase 1. The field desc
 | --- | --- |
 | SessionState | id, projectId, status, transcriptRevision, stopRevision, mediaReady, recentUtterances, currentSuggestion, activeSpeech |
 | TranscriptTurn | id, sessionId, speakerId (nullable), speakerName, text, startMs, endMs, isBot |
-| AssistanceRequest | mode (`answer`, `support`, `clarify`), selectedUtteranceIds, operatorQuestion (optional), transcriptRevision |
+| AssistanceRequest | mode (`answer`, `support`, `clarify`), selectedUtteranceIds, transcriptRevision |
 | Evidence | id, kind (`source`, `utterance`), title, excerpt, occurredAt (nullable), factIds |
-| SuggestionDraft | id, sessionId, version, mode, text, evidence, basis (`notes`, `meeting`, `mixed`, `needs_context`), transcriptRevision, createdAt |
+| SuggestionDraft | id, sessionId, version, mode, text, responseTargets, evidence, basis (`notes`, `meeting`, `mixed`, `needs_context`), transcriptRevision, createdAt |
 | ApprovalRequest | suggestionId, version, approvedText, clientRequestId, reviewedTranscriptRevision |
 | SpeechState | id, status, approvedText, createdAt, errorCode (nullable) |
 | ApiError | code, message, retryable, requestId |

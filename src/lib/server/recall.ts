@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { z } from "zod";
 import { recallConfig } from "./env";
 
 const SIGNATURE_AGE_SECONDS = 5 * 60;
@@ -69,6 +70,55 @@ async function recallRequest(path: string, init: RequestInit) {
   }
   if (response.status === 204) return null;
   return response.json() as Promise<unknown>;
+}
+
+const recallBotSchema = z.object({
+  id: z.string().uuid().optional(),
+  bot_id: z.string().uuid().optional(),
+  metadata: z.record(z.string(), z.unknown()).optional().default({}),
+  status: z.string().optional(),
+  status_changes: z.array(z.object({
+    code: z.string().min(1),
+    sub_code: z.string().nullable().optional(),
+    created_at: z.string().datetime({ offset: true }),
+  }).passthrough()).default([]),
+}).refine((bot) => Boolean(bot.id || bot.bot_id), "Recall bot id is missing");
+
+export type RecallBotSnapshot = {
+  id: string;
+  metadata: Record<string, unknown>;
+  status: string | null;
+  statusChanges: { code: string; subCode: string | null; createdAt: string }[];
+};
+
+function parseBot(value: unknown): RecallBotSnapshot {
+  const parsed = recallBotSchema.parse(value);
+  return {
+    id: parsed.id || parsed.bot_id!,
+    metadata: parsed.metadata,
+    status: parsed.status || null,
+    statusChanges: parsed.status_changes.map((item) => ({
+      code: item.code,
+      subCode: item.sub_code || null,
+      createdAt: item.created_at,
+    })),
+  };
+}
+
+export async function retrieveRecallBot(botId: string) {
+  return parseBot(await recallRequest(`/bot/${encodeURIComponent(botId)}/`, { method: "GET" }));
+}
+
+export async function findRecallBotBySessionId(sessionId: string) {
+  const query = new URLSearchParams({ metadata__myduo_session_id: sessionId });
+  const response = await recallRequest(`/bot/?${query}`, { method: "GET" });
+  const results = Array.isArray(response)
+    ? response
+    : response && typeof response === "object" && "results" in response && Array.isArray(response.results)
+      ? response.results
+      : [];
+  if (!results.length) return null;
+  return parseBot(results[0]);
 }
 
 export async function createRecallBot(sessionId: string, meetingUrl: string, transcriptUrl: string, mediaUrl: string) {

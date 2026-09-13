@@ -3,7 +3,14 @@ import { z } from "zod";
 import { sessionStateSchema, suggestionDraftSchema, type SessionState, type SpeechState } from "../contracts";
 import { readQuery, writeQuery } from "./db";
 import { recallConfig } from "./env";
-import { createRecallBot, RecallError, removeRecallBot } from "./recall";
+import {
+  createRecallBot,
+  findRecallBotBySessionId,
+  RecallError,
+  removeRecallBot,
+  retrieveRecallBot,
+  type RecallBotSnapshot,
+} from "./recall";
 import { AuthError } from "./auth";
 
 const ACTIVE_STATUSES = ["joining", "waiting", "listening", "ending", "uncertain"];
@@ -143,6 +150,7 @@ export async function getSessionState(ownerId: string, sessionId: string): Promi
           trigger: suggestionProps.trigger ?? "manual",
           text: suggestionProps.text,
           evidence: JSON.parse(String(suggestionProps.evidenceJson || "[]")),
+          responseTargets: JSON.parse(String(suggestionProps.responseTargetJson || "[]")),
           basis: suggestionProps.basis,
           transcriptRevision: asNumber(suggestionProps.transcriptRevision),
           createdAt: String(suggestionProps.createdAt),
@@ -284,10 +292,36 @@ export async function createMeeting(ownerId: string, input: { meetingUrl: string
 }
 
 export async function endMeeting(ownerId: string, sessionId: string) {
-  const botId = await writeQuery(async (tx) => {
+  const known = await readQuery(async (tx) => {
     const result = await tx.run(
       `MATCH (s:Session {id: $sessionId, ownerId: $ownerId})
-       SET s.status = 'ending', s.stopRevision = coalesce(s.stopRevision, 0) + 1,
+       RETURN s.providerBotId AS botId, s.status AS status`,
+      { sessionId, ownerId },
+    );
+    if (!result.records.length) throw new MeetingError("Meeting session not found", "SESSION_NOT_FOUND", 404);
+    return {
+      botId: result.records[0].get("botId") as string | null,
+      status: String(result.records[0].get("status")),
+    };
+  });
+  if (known.status === "ended") return getSessionState(ownerId, sessionId);
+
+  let botId = known.botId;
+  let providerEnded = false;
+  if (!botId && known.status === "uncertain") {
+    const bot = await findRecallBotBySessionId(sessionId);
+    if (!bot) {
+      throw new MeetingError("Recall has not resolved this meeting yet. Try End again shortly.", "RECOVERY_PENDING", 409);
+    }
+    botId = bot.id;
+    providerEnded = latestRecallStatus(bot)?.status === "ended";
+  }
+
+  await writeQuery(async (tx) => {
+    const result = await tx.run(
+      `MATCH (s:Session {id: $sessionId, ownerId: $ownerId})
+       SET s.providerBotId = coalesce(s.providerBotId, $botId),
+           s.status = 'ending', s.stopRevision = coalesce(s.stopRevision, 0) + 1,
            s.updatedAt = $now, s.activeSpeechId = null
        WITH s
        OPTIONAL MATCH (c:SpeechCommand {sessionId: s.id})
@@ -295,15 +329,14 @@ export async function endMeeting(ownerId: string, sessionId: string) {
        SET c.status = 'cancelled', c.updatedAt = $now
        WITH s
        OPTIONAL MATCH (a:AccessSession {scopedSessionId: s.id}) DETACH DELETE a
-       RETURN s.providerBotId AS botId`,
-      { sessionId, ownerId, now: new Date().toISOString() },
+       RETURN s.id AS id`,
+      { sessionId, ownerId, botId, now: new Date().toISOString() },
     );
     if (!result.records.length) throw new MeetingError("Meeting session not found", "SESSION_NOT_FOUND", 404);
-    return result.records[0].get("botId") as string | null;
   });
 
   try {
-    if (botId) await removeRecallBot(botId);
+    if (botId && !providerEnded) await removeRecallBot(botId);
     await writeQuery(async (tx) => {
       await tx.run(`MATCH (s:Session {id: $sessionId, ownerId: $ownerId}) SET s.status = 'ended', s.updatedAt = $now`, {
         sessionId,
@@ -328,15 +361,154 @@ export function parseStatusEvent(value: unknown) {
   return statusEventSchema.parse(value);
 }
 
+export function recallStatusFromCode(code: string) {
+  const normalized = code.replace(/^bot\./, "");
+  if (["ready", "joining_call"].includes(normalized)) return { status: "joining" as const, rank: 0 };
+  if (normalized === "in_waiting_room") return { status: "waiting" as const, rank: 1 };
+  if (["in_call_not_recording", "recording_permission_allowed", "in_call_recording"].includes(normalized)) {
+    return { status: "listening" as const, rank: 2 };
+  }
+  if (["fatal", "recording_permission_denied"].includes(normalized)) return { status: "failed" as const, rank: 3 };
+  if (["call_ended", "done", "recording_done", "analysis_done"].includes(normalized)) return { status: "ended" as const, rank: 4 };
+  return null;
+}
+
+export function latestRecallStatus(bot: RecallBotSnapshot) {
+  const latest = [...bot.statusChanges].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))[0];
+  const mapped = recallStatusFromCode(latest?.code || bot.status || "");
+  return mapped ? { ...mapped, updatedAt: latest?.createdAt || new Date().toISOString(), errorCode: latest?.subCode || null } : null;
+}
+
+export type MeetingSummary = {
+  id: string;
+  projectId: string;
+  projectName: string;
+  meetingPlatform: "google_meet" | "zoom";
+  status: SessionState["status"];
+  createdAt: string;
+  updatedAt: string;
+  transcriptCount: number;
+  reviewState: "none" | "pending" | "complete";
+};
+
+export function reviewStateForMeeting(
+  status: SessionState["status"],
+  transcriptCount: number,
+  extractionStatus: string,
+  pendingReviewCount: number,
+): MeetingSummary["reviewState"] {
+  if (status !== "ended" || transcriptCount === 0) return "none";
+  return extractionStatus === "ready" && pendingReviewCount === 0 ? "complete" : "pending";
+}
+
+export async function listMeetingSessions(ownerId: string): Promise<MeetingSummary[]> {
+  return readQuery(async (tx) => {
+    const result = await tx.run(
+      `MATCH (s:Session {ownerId: $ownerId})
+       WHERE s.status IN ['joining', 'waiting', 'listening', 'ending', 'uncertain', 'ended']
+       OPTIONAL MATCH (p:Project {id: s.projectId, ownerId: $ownerId})
+       CALL (s) {
+         OPTIONAL MATCH (s)-[:HAS_UTTERANCE]->(u:Utterance)
+         RETURN count(u) AS transcriptCount
+       }
+       CALL (s) {
+         OPTIONAL MATCH (s)-[:HAS_REVIEW_CANDIDATE]->(candidate:ReviewCandidate {status: 'pending'})
+         RETURN count(candidate) AS pendingReviewCount
+       }
+       RETURN s.id AS id, s.projectId AS projectId, coalesce(p.name, 'General') AS projectName,
+              coalesce(s.meetingPlatform, 'google_meet') AS meetingPlatform, s.status AS status,
+              s.createdAt AS createdAt, s.updatedAt AS updatedAt,
+              transcriptCount, pendingReviewCount,
+              coalesce(s.reviewExtractionStatus, '') AS extractionStatus
+       ORDER BY s.createdAt DESC LIMIT 12`,
+      { ownerId },
+    );
+    return result.records.map((record) => {
+      const status = record.get("status") as SessionState["status"];
+      const transcriptCount = asNumber(record.get("transcriptCount"));
+      return {
+        id: String(record.get("id")),
+        projectId: String(record.get("projectId")),
+        projectName: String(record.get("projectName")),
+        meetingPlatform: record.get("meetingPlatform") === "zoom" ? "zoom" : "google_meet",
+        status,
+        createdAt: String(record.get("createdAt")),
+        updatedAt: String(record.get("updatedAt")),
+        transcriptCount,
+        reviewState: reviewStateForMeeting(
+          status,
+          transcriptCount,
+          String(record.get("extractionStatus")),
+          asNumber(record.get("pendingReviewCount")),
+        ),
+      };
+    });
+  });
+}
+
+export async function recoverMeeting(ownerId: string, sessionId: string) {
+  const session = await readQuery(async (tx) => {
+    const result = await tx.run(
+      `MATCH (s:Session {id: $sessionId, ownerId: $ownerId})
+       RETURN s.providerBotId AS providerBotId, s.status AS status`,
+      { sessionId, ownerId },
+    );
+    if (!result.records.length) throw new MeetingError("Meeting session not found", "SESSION_NOT_FOUND", 404);
+    return {
+      providerBotId: result.records[0].get("providerBotId") as string | null,
+      status: String(result.records[0].get("status")),
+    };
+  });
+  if (!["joining", "waiting", "listening", "ending", "uncertain"].includes(session.status)) {
+    return getSessionState(ownerId, sessionId);
+  }
+
+  let bot: RecallBotSnapshot | null = null;
+  if (session.providerBotId) {
+    try {
+      bot = await retrieveRecallBot(session.providerBotId);
+    } catch (error) {
+      if (!(error instanceof RecallError) || error.code !== "RECALL_REJECTED") throw error;
+    }
+  }
+  bot ??= await findRecallBotBySessionId(sessionId);
+  if (!bot) {
+    throw new MeetingError("No meeting bot was found. End this session before starting another.", "RECOVERY_NOT_FOUND", 409);
+  }
+  const provider = latestRecallStatus(bot);
+  if (!provider) throw new MeetingError("Recall has not reported a usable meeting state yet", "RECOVERY_PENDING", 409);
+
+  await writeQuery(async (tx) => {
+    await tx.run(
+      `MATCH (s:Session {id: $sessionId, ownerId: $ownerId})
+       SET s.providerBotId = $botId, s.status = $status, s.providerStatusRank = $rank,
+           s.providerStatusUpdatedAt = datetime($providerUpdatedAt), s.errorCode = $errorCode,
+           s.updatedAt = $now
+       WITH s
+       OPTIONAL MATCH (a:AccessSession {scopedSessionId: s.id})
+       FOREACH (_ IN CASE WHEN $terminal AND a IS NOT NULL THEN [1] ELSE [] END | DETACH DELETE a)
+       WITH s
+       OPTIONAL MATCH (c:SpeechCommand {sessionId: s.id})
+       WHERE $terminal AND c.status IN ['queued', 'claimed', 'preparing', 'playing']
+       SET c.status = 'cancelled', c.updatedAt = $now, s.activeSpeechId = null`,
+      {
+        ownerId,
+        sessionId,
+        botId: bot.id,
+        status: provider.status,
+        rank: provider.rank,
+        providerUpdatedAt: provider.updatedAt,
+        errorCode: provider.errorCode,
+        terminal: ["ended", "failed"].includes(provider.status),
+        now: new Date().toISOString(),
+      },
+    );
+  });
+  return getSessionState(ownerId, sessionId);
+}
+
 export async function applyRecallStatus(eventId: string, value: z.infer<typeof statusEventSchema>) {
-  const providerState = (() => {
-    if (["bot.joining_call"].includes(value.event)) return { status: "joining", rank: 0 };
-    if (["bot.in_waiting_room"].includes(value.event)) return { status: "waiting", rank: 1 };
-    if (["bot.in_call_not_recording", "bot.recording_permission_allowed", "bot.in_call_recording"].includes(value.event)) return { status: "listening", rank: 2 };
-    if (["bot.fatal", "bot.recording_permission_denied"].includes(value.event)) return { status: "failed", rank: 3 };
-    if (["bot.call_ended", "bot.done"].includes(value.event)) return { status: "ended", rank: 4 };
-    return null;
-  })();
+  const providerState = recallStatusFromCode(value.event);
   if (!providerState) return { knownSession: false, ignored: true, duplicate: false };
 
   const metadataSessionId = value.data.bot.metadata.myduo_session_id;

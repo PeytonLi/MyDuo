@@ -25,6 +25,7 @@ export function MeetAddonClient({ cloudProjectNumber }: { cloudProjectNumber: st
   const [session, setSession] = useState<SessionState | null>(null);
   const [mode, setMode] = useState<Mode>("clarify");
   const [draftEdit, setDraftEdit] = useState<{ suggestionId: string; text: string } | null>(null);
+  const [reviewedDraft, setReviewedDraft] = useState<{ suggestionId: string; revision: number } | null>(null);
   const [quickNote, setQuickNote] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -91,6 +92,7 @@ export function MeetAddonClient({ cloudProjectNumber }: { cloudProjectNumber: st
       });
       setSession({ ...session, currentSuggestion: suggestion });
       setDraftEdit(null);
+      setReviewedDraft(null);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Drafting failed.");
     } finally {
@@ -141,6 +143,13 @@ export function MeetAddonClient({ cloudProjectNumber }: { cloudProjectNumber: st
     } finally {
       setBusy(false);
     }
+  }
+
+  function reviewStaleDraft() {
+    const suggestion = session?.currentSuggestion;
+    if (!session || !suggestion) return;
+    setReviewedDraft({ suggestionId: suggestion.id, revision: session.transcriptRevision });
+    setMessage("Draft reviewed against the latest conversation.");
   }
 
   async function stop() {
@@ -194,7 +203,8 @@ export function MeetAddonClient({ cloudProjectNumber }: { cloudProjectNumber: st
 
   const suggestion = session.currentSuggestion;
   const draft = draftEdit && draftEdit.suggestionId === suggestion?.id ? draftEdit.text : suggestion?.text ?? "";
-  const stale = Boolean(suggestion && suggestion.transcriptRevision < session.transcriptRevision);
+  const stale = Boolean(suggestion && suggestion.transcriptRevision < session.transcriptRevision
+    && (reviewedDraft?.suggestionId !== suggestion.id || reviewedDraft.revision !== session.transcriptRevision));
   return (
     <section className={styles.panel}>
       <header><Wordmark compact /><span>{session.status}</span></header>
@@ -215,10 +225,14 @@ export function MeetAddonClient({ cloudProjectNumber }: { cloudProjectNumber: st
         <button disabled={busy || session.status !== "listening"}>{busy ? "Working…" : "Draft privately"}</button>
       </form>
       {suggestion && <div className={styles.draft}>
+        <div className={styles.respondingTo}>
+          <strong>Responding to{suggestion.responseTargets.length === 0 ? " the latest conversation" : ""}</strong>
+          {suggestion.responseTargets.map((target) => <p key={target.id}><span>{target.speakerName}</span>{target.text}</p>)}
+        </div>
         <label htmlFor="addon-draft">Suggested words</label>
         <textarea id="addon-draft" value={draft} onChange={(event) => setDraftEdit({ suggestionId: suggestion.id, text: event.target.value })} maxLength={600} rows={6} />
-        {stale && <p role="alert">The meeting changed. Draft again before speaking.</p>}
-        <div><button onClick={speak} disabled={busy || stale || !session.mediaReady || !draft.trim()}>Speak to meeting</button><button className={styles.stop} onClick={stop} disabled={busy || !session.activeSpeech}>Stop</button></div>
+        {stale && <div role="alert"><p>The meeting changed. Review this draft once more before speaking.</p><button type="button" onClick={reviewStaleDraft}>Still relevant — review again</button></div>}
+        <div><button type="button" onClick={speak} disabled={busy || stale || !session.mediaReady || !draft.trim()}>Speak to meeting</button><button type="button" className={styles.stop} onClick={stop} disabled={busy || !session.activeSpeech}>Stop</button></div>
       </div>}
       <button className={styles.end} onClick={endMeeting} disabled={busy}>End meeting</button>
       <small>Only you can see this side panel. Speech still requires your click.</small>

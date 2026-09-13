@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { meetingErrorResponse } from "@/lib/server/meetings";
-import { failCommand, mediaTokenFrom, prepareApprovedAudio, synthesizeApprovedText } from "@/lib/server/speech";
+import { assertApprovedAudioActive, failCommand, mediaTokenFrom, prepareApprovedAudio, synthesizeApprovedText } from "@/lib/server/speech";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,9 +15,11 @@ export async function GET(request: Request, { params }: Context) {
     const parsed = await params;
     sessionId = z.string().uuid().parse(parsed.sessionId);
     commandId = z.string().uuid().parse(parsed.commandId);
-    const approved = await prepareApprovedAudio(mediaTokenFrom(request), sessionId, commandId);
+    const mediaTokenHash = mediaTokenFrom(request);
+    const approved = await prepareApprovedAudio(mediaTokenHash, sessionId, commandId);
     authorized = true;
     const audio = await synthesizeApprovedText(approved.text, approved.voiceId);
+    await assertApprovedAudioActive(mediaTokenHash, sessionId, commandId);
     return new Response(audio, {
       headers: {
         "Content-Type": "audio/mpeg",

@@ -1,33 +1,22 @@
 # MyDuo hackathon demo
 
-Use the **Northstar Summit keynote video** project. It is fictional and separate from MyDuo, so the meeting feels like a real production check-in.
+Demo MyDuo as a private meeting copilot for a fictional production team delivering the **Northstar Summit keynote video**. The seeded project contains six source documents, twenty confirmed facts, six people, and connected ownership and dependency relationships.
 
-## What Neo4j already knows
+The core story is simple: MyDuo hears a question, combines the selected transcript with confirmed Neo4j memory, privately drafts an answer, and speaks only after the operator approves the exact words.
 
-The fictional Northstar workspace starts with six source documents, twenty confirmed facts, six people, and a connected production schedule.
+## Before the demo
 
-- The keynote video is 90 seconds and centers on an Orion Health customer story.
-- The final cut is due October 8, 2026 at 2:00 PM Pacific.
-- The final cut depends on legal approval of the customer quote by October 6 at noon.
-- Maya Chen owns the final edit and backup cut.
-- Elena Ruiz owns legal approval.
-- If legal misses the cutoff, the team uses the backup cut without the quote.
-- Priya Shah consolidates one leadership feedback round after the October 7 CEO review.
-- Picture lock is October 7 at 5:00 PM and depends on executive review, legal, and the approved product capture.
-- Lighthouse Post has an $8,400 color-and-sound slot on October 8 under purchase order NS-204.
-- Simone Brooks must release the purchase order by September 30.
-- The music license must clear by October 3, and the build 6.4 product capture is due October 2.
-- Lucas Park owns the 4K master, 1080p backup, audio split, captions, accessibility review, and checksums.
-- Accessibility and technical QC are due October 9 at noon.
-- Theo Martin owns the October 10 LED-wall playback test and event-team acceptance.
+1. Run `pnpm seed` to restore the Northstar data.
+2. Open the deployed MyDuo workspace and select **Northstar Summit keynote video**.
+3. Open Neo4j Query in another tab with both queries below ready to run.
+4. Start a short Meet or Zoom call with one teammate and admit the visible MyDuo bot.
+5. Keep **Auto-suggest questions** off until the manual flow succeeds.
 
-The repeatable seed is in `scripts/seed.ts`. Run `pnpm seed` whenever the demo database needs to be restored.
+The text field beneath the transcript is **Quick note**. It saves a candidate for review after the meeting. It does not steer the current AI draft and it is never spoken automatically.
 
-## Five-minute demo
+## Neo4j opening
 
-### 1. Show the graph — 30 seconds
-
-Open Neo4j Query and run:
+Run this overview query:
 
 ```cypher
 MATCH (project:Project {id: '66666666-6666-4666-8666-666666666666'})-[:HAS_FACT]->(fact:Fact)
@@ -37,78 +26,116 @@ OPTIONAL MATCH (fact)-[:DEPENDS_ON]->(dependency:Fact)
 RETURN project, fact, source, owner, dependency
 ```
 
-Say: “MyDuo does not treat memory as one transcript blob. Neo4j connects the deliverable to confirmed decisions, owners, deadlines, dependencies, and the notes that support them.”
+Say:
 
-For a cleaner view of the critical path, run:
+> This is the team's working memory. Neo4j connects the deliverable to source notes, confirmed decisions, owners, deadlines, and dependencies. MyDuo can follow those relationships instead of searching one large transcript.
+
+Then show the critical path:
 
 ```cypher
 MATCH path = (handoff:Fact {id: '99999999-9999-4999-8999-999999999999'})-[:DEPENDS_ON*1..4]->(dependency:Fact)
 RETURN path
 ```
 
-This shows the final handoff connected to sound mix, picture lock, the purchase order, music licensing, product capture, legal approval, and executive review.
+The handoff connects to sound mix, picture lock, the purchase order, music licensing, product capture, legal approval, and executive review.
 
-### 2. Start the meeting — 30 seconds
+## Five-minute live script
 
-Choose **Northstar Summit keynote video**, paste the meeting link, confirm participant consent, and start MyDuo. Admit the visible bot.
+### 1. Answer from project memory
 
-Ask a teammate to say:
+Ask your teammate to say:
 
-> Maya’s edit is nearly done, but legal has not cleared the customer quote. Are we still safe for the final handoff?
+> Maya's edit is nearly done, but legal has not cleared the customer quote. Are we still on track for the October 8 handoff, and what is our fallback if legal slips?
 
-### 3. Draft a grounded answer — 90 seconds
+When the sentence appears in the transcript:
 
 1. Select that transcript line.
 2. Choose **Help me answer**.
-3. Enter: `State the deadline, owner, biggest dependency, and fallback.`
-4. Select **Draft**.
-5. Open the evidence under the draft before speaking.
+3. Select **Draft**.
+4. Open the evidence beneath the private draft.
 
-A good result should explain that the October 8 handoff depends on Elena’s October 6 legal approval, Maya owns the edit, and the backup cut removes the quote.
+There is no instruction box. The selected transcript line identifies what MyDuo should answer, and the selected mode determines the kind of contribution. If nothing is selected, MyDuo uses the latest relevant conversation.
 
-Say: “The selected line is what I am responding to. My instruction tells MyDuo what my answer should emphasize. The answer is grounded in connected Neo4j memory, and nothing is spoken yet.”
+A good draft should mention that the handoff depends on Elena Ruiz's October 6 legal approval, Maya Chen owns the edit, and the team can use the backup cut without the quote.
 
-Edit a few words, then select **Speak to meeting**. Emphasize that ElevenLabs receives only the exact text you approved.
+Say:
 
-### 4. Turn ambiguity into a question — 60 seconds
+> The answer came from the live question and the connected project memory. I can inspect its sources, edit the words, or dismiss it. Nothing reaches the call until I press Speak.
 
-Ask the teammate to say:
+Make one small edit, choose **Save edit**, then choose **Speak to meeting**.
+
+### 2. Find a precise project detail
+
+Deselect the first transcript line by selecting it again. Ask your teammate to say:
+
+> Before we finish, what files does the events team need, and who owns the delivery package?
+
+Select that new line, choose **Find context**, and choose **Draft**. The response should identify Lucas Park and the 4K ProRes master, 1080p backup, WAV split, WebVTT captions, and checksum manifest.
+
+This demonstrates that the same graph can answer a schedule question and then traverse to a different owner and deliverable without loading a new document.
+
+### 3. Turn ambiguity into a useful question
+
+Deselect the previous line. Ask your teammate to say:
 
 > Legal should get back to us soon.
 
-Select that line, choose **Suggest a question**, and enter: `Turn “soon” into a firm commitment.`
-
-The expected question is similar to: “Can we confirm who will approve the quote and the exact deadline for that decision?” Review it, then speak it.
+Select that line, choose **Suggest a question**, and choose **Draft**. A useful result should ask for the owner or exact approval time. Approve it if it is concise.
 
 Have the teammate answer:
 
 > Elena will confirm by October 6 at 10:00 AM, two hours before the cutoff.
 
-### 5. Grow the graph — 90 seconds
+### 4. Capture memory without interrupting the call
 
-End the meeting and choose **Review meeting memory**. Accept only the proposed responsibility or deadline that accurately captures Elena’s new commitment. Edit it before accepting if needed.
+Keep the teammate's commitment selected. In **Quick note**, enter:
 
-Run the Neo4j query again. The accepted fact and its supporting meeting source now appear in the same project graph.
+`Elena committed to confirm legal approval by October 6 at 10:00 AM.`
 
-Say: “The meeting changed the graph only after I reviewed and accepted the candidate. The next meeting can use that confirmed commitment as evidence.”
+Choose **Capture**.
 
-## Demo safeguards
+Say:
 
-- Keep automatic suggestions off for the first run; enable them only after the manual path succeeds.
-- Use one short approved sentence for the voice demo.
-- Keep Neo4j Query open in another tab with the visualization query ready.
-- Rehearse Stop while speech is playing and confirm another participant hears it stop.
-- If the Meet side panel is not installed and tested, use the deployed companion window and omit the add-on from the pitch.
+> This note is separate from speech. It is held as a pending memory candidate, with the selected transcript attached as evidence. It cannot affect a future meeting until I review and accept it.
 
-## Extra realistic questions
+### 5. Grow the graph
 
-Use these if a judge wants to explore beyond the rehearsed path:
+End the meeting and choose **Review meeting memory**. Find the captured commitment, confirm its type and wording, select **Save this memory**, and choose **Save accepted**.
 
-- “What exactly has to be delivered to the events team?”
+Run the Neo4j overview query again. The accepted fact and its supporting meeting source now appear in the Northstar graph.
+
+Say:
+
+> The graph changed only after human review. The next meeting can use this confirmed commitment, along with the transcript evidence that supports it.
+
+## What each control means
+
+| Control | Meaning |
+| --- | --- |
+| Selected transcript lines | The part of the conversation MyDuo should focus on. Up to ten lines may be selected. |
+| Help me answer | Draft a direct reply to the selected line or latest relevant question. |
+| Find context | Draft a useful supporting detail from the meeting and confirmed project memory. |
+| Suggest a question | Draft a concise clarification question. |
+| Draft | Generate a private contribution. It does not speak. |
+| Save edit | Store the operator's revised wording as a new draft version. |
+| Speak to meeting | Send only the reviewed text to ElevenLabs and the meeting. |
+| Quick note | Save a pending memory candidate for post-meeting review. It does not steer speech. |
+| Auto-suggest questions | Privately offer occasional clarification questions. It never speaks automatically. |
+
+## Backup questions
+
 - “Who owns the purchase order, and what happens if it is late?”
 - “Which approvals are blocking picture lock?”
 - “When is the venue playback test, and who owns acceptance?”
-- “What is our fallback if the customer quote is not approved?”
-- “How many executive revision rounds are in the budget?”
+- “What is the fallback if the customer quote is not approved?”
+- “How many executive revision rounds are included in the budget?”
 - “What could move the sound mix from October 8 to October 12?”
 - “Who owns captions and accessibility review?”
+
+## Demo safeguards
+
+- Keep the approved spoken response to one or two sentences.
+- Keep Neo4j Query open with the visualization query ready.
+- Deselect old transcript lines before demonstrating a different request.
+- Rehearse Stop while speech is playing and confirm the other participant hears it stop.
+- Use the deployed companion window unless the Meet side panel has been installed and tested.

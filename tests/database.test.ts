@@ -5,12 +5,14 @@ import { createAddonPair, exchangeAddonPair } from "../src/lib/server/addon";
 import { AuthError, requireOperator } from "../src/lib/server/auth";
 import { getDriver, readQuery, writeQuery } from "../src/lib/server/db";
 import { elevenLabsVoices } from "../src/lib/server/env";
-import { applyRecallStatus, createMeeting, getSessionState, MeetingError } from "../src/lib/server/meetings";
+import { applyRecallStatus, createMeeting, getSessionState, listMeetingSessions, MeetingError } from "../src/lib/server/meetings";
 import { createMemory, deleteMemory, getProfile, getSuggestionContext, listMemory, updateProfile } from "../src/lib/server/memory";
 import {
   acknowledgeCommand,
+  assertApprovedAudioActive,
   assertMediaSession,
   exchangeMediaBootstrap,
+  failCommand,
   heartbeatAndClaim,
   prepareApprovedAudio,
   queueSpeech,
@@ -139,6 +141,16 @@ test("Neo4j regression: memory, webhooks, media authority, and speech state", { 
     await assert.rejects(() => requireOperator(addonRequest, randomUUID()), AuthError);
     await assert.rejects(() => exchangeAddonPair(pairing.code));
 
+    await writeQuery(async (tx) => {
+      await tx.run(
+        `CREATE (:Suggestion {
+           id: $id, ownerId: $ownerId, sessionId: $sessionId, status: 'approved',
+           generatedText: 'The launch is Friday.', approvedText: 'Friday is possible after security approval.',
+           approvedAt: $now
+         })`,
+        { id: randomUUID(), ownerId, sessionId, now: new Date().toISOString() },
+      );
+    });
     const context = await getSuggestionContext(ownerId, sessionId, {
       mode: "answer",
       selectedUtteranceIds: [state.recentUtterances[0].id],
@@ -147,6 +159,11 @@ test("Neo4j regression: memory, webhooks, media authority, and speech state", { 
     assert.ok(context.evidence.some((item) => item.id === publicSource.id));
     assert.ok(context.evidence.some((item) => item.id === state.recentUtterances[0].id));
     assert.ok(!context.evidence.some((item) => item.id === privateSource.id));
+    assert.deepEqual(context.responseTargets.map((item) => item.text), ["Can we launch?"]);
+    assert.deepEqual(context.learnedEdits, [{
+      draft: "The launch is Friday.",
+      approved: "Friday is possible after security approval.",
+    }]);
 
     const suggestionId = randomUUID();
     await writeQuery(async (tx) => {
@@ -154,7 +171,7 @@ test("Neo4j regression: memory, webhooks, media authority, and speech state", { 
         `MATCH (s:Session {id: $sessionId})
          CREATE (g:Suggestion {
            id: $suggestionId, ownerId: $ownerId, sessionId: $sessionId,
-           version: 1, mode: 'answer', text: $text, evidenceIds: [$sourceId],
+           version: 1, mode: 'answer', text: $text, generatedText: $text, evidenceIds: [$sourceId],
            evidenceJson: $evidenceJson, basis: 'notes', transcriptRevision: 1,
            status: 'ready', createdAt: $now
          })
@@ -196,7 +213,7 @@ test("Neo4j regression: memory, webhooks, media authority, and speech state", { 
     const approval = {
       suggestionId,
       version: 1,
-      approvedText: "The public launch waits for the security review.",
+      approvedText: "The public launch must wait for the security review.",
       clientRequestId,
       reviewedTranscriptRevision: 1,
     };
@@ -211,18 +228,30 @@ test("Neo4j regression: memory, webhooks, media authority, and speech state", { 
     const queued = await queueSpeech(ownerId, sessionId, approval);
     assert.equal(queued.status, "queued");
     assert.equal((await queueSpeech(ownerId, sessionId, approval)).id, queued.id);
+    const approvedExample = await readQuery(async (tx) => {
+      const result = await tx.run(
+        "MATCH (g:Suggestion {id: $suggestionId}) RETURN g.generatedText AS draft, g.approvedText AS approved, g.approvedAt AS approvedAt",
+        { suggestionId },
+      );
+      return result.records[0];
+    });
+    assert.equal(approvedExample.get("draft"), "The public launch waits for the security review.");
+    assert.equal(approvedExample.get("approved"), approval.approvedText);
+    assert.ok(approvedExample.get("approvedAt"));
     await updateProfile(ownerId, { ...profile, selectedVoiceId: secondVoice.id });
 
     const claimed = await heartbeatAndClaim(mediaTokenHash, sessionId);
     assert.equal(claimed.command?.id, queued.id);
     assert.equal(claimed.command?.status, "claimed");
     assert.equal((await heartbeatAndClaim(mediaTokenHash, sessionId)).command, null);
-    assert.deepEqual(await prepareApprovedAudio(mediaTokenHash, sessionId, queued.id), { text: approval.approvedText, voiceId: firstVoice.id });
     await assert.rejects(
       () => acknowledgeCommand(mediaTokenHash, sessionId, { commandId: queued.id, status: "completed" }),
       (error) => error instanceof MeetingError && error.code === "INVALID_SPEECH_STATE",
     );
-    assert.equal((await acknowledgeCommand(mediaTokenHash, sessionId, { commandId: queued.id, status: "playing" })).status, "playing");
+    assert.deepEqual(await prepareApprovedAudio(mediaTokenHash, sessionId, queued.id), { text: approval.approvedText, voiceId: firstVoice.id });
+    await assert.doesNotReject(() => assertApprovedAudioActive(mediaTokenHash, sessionId, queued.id));
+    assert.equal((await acknowledgeCommand(mediaTokenHash, sessionId, { commandId: queued.id, status: "completed" })).status, "completed");
+    assert.equal((await acknowledgeCommand(mediaTokenHash, sessionId, { commandId: queued.id, status: "playing" })).status, "completed");
     assert.equal((await acknowledgeCommand(mediaTokenHash, sessionId, { commandId: queued.id, status: "completed" })).status, "completed");
 
     const secondSuggestionId = randomUUID();
@@ -247,7 +276,15 @@ test("Neo4j regression: memory, webhooks, media authority, and speech state", { 
       reviewedTranscriptRevision: 1,
     });
     assert.equal(second.status, "queued");
+    assert.equal((await heartbeatAndClaim(mediaTokenHash, sessionId)).command?.status, "claimed");
+    await prepareApprovedAudio(mediaTokenHash, sessionId, second.id);
     assert.equal((await stopSpeech(ownerId, sessionId)).stopRevision, 1);
+    await assert.rejects(
+      () => assertApprovedAudioActive(mediaTokenHash, sessionId, second.id),
+      (error) => error instanceof MeetingError && error.code === "COMMAND_CANCELLED",
+    );
+    await failCommand(sessionId, second.id, "TTS_FAILED");
+    assert.equal((await acknowledgeCommand(mediaTokenHash, sessionId, { commandId: second.id, status: "playing" })).status, "cancelled");
     const afterStop = await getSessionState(ownerId, sessionId);
     assert.equal(afterStop.activeSpeech, null);
 
@@ -280,6 +317,16 @@ test("Neo4j regression: memory, webhooks, media authority, and speech state", { 
       return result.records[0].get("count").toNumber();
     });
     assert.equal(commandCount, 1, "idempotent approval must create exactly one command");
+
+    await writeQuery(async (tx) => {
+      await tx.run("MATCH (s:Session {id: $sessionId}) SET s.status = 'ended', s.updatedAt = $now", {
+        sessionId,
+        now: new Date().toISOString(),
+      });
+    });
+    const history = (await listMeetingSessions(ownerId)).find((meeting) => meeting.id === sessionId);
+    assert.equal(history?.transcriptCount, 1);
+    assert.equal(history?.reviewState, "pending", "an ended transcript should remain visible for memory review");
   } finally {
     await writeQuery(async (tx) => {
       await tx.run(

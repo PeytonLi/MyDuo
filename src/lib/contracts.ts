@@ -22,6 +22,12 @@ export const evidenceSchema = z.object({
   factIds: z.array(z.string()),
 });
 
+export const responseTargetSchema = z.object({
+  id: idSchema,
+  speakerName: z.string().min(1).max(120),
+  text: z.string().min(1).max(5_000),
+});
+
 export const suggestionDraftSchema = z.object({
   id: idSchema,
   sessionId: idSchema,
@@ -30,6 +36,7 @@ export const suggestionDraftSchema = z.object({
   trigger: z.enum(["manual", "auto"]).default("manual"),
   text: z.string().min(1).max(600),
   evidence: z.array(evidenceSchema),
+  responseTargets: z.array(responseTargetSchema).max(10).default([]),
   basis: z.enum(["notes", "meeting", "mixed", "needs_context"]),
   transcriptRevision: z.number().int().nonnegative(),
   createdAt: z.string(),
@@ -70,7 +77,6 @@ export const speechStateSchema = z.object({
 export const assistanceRequestSchema = z.object({
   mode: z.enum(["answer", "support", "clarify"]),
   selectedUtteranceIds: z.array(idSchema).max(10),
-  operatorQuestion: z.string().trim().max(500).optional(),
   transcriptRevision: z.number().int().nonnegative(),
 });
 
@@ -104,6 +110,7 @@ export const sessionStateSchema = z.object({
 
 export type TranscriptTurn = z.infer<typeof transcriptTurnSchema>;
 export type Evidence = z.infer<typeof evidenceSchema>;
+export type ResponseTarget = z.infer<typeof responseTargetSchema>;
 export type SuggestionDraft = z.infer<typeof suggestionDraftSchema>;
 export type AutoSuggestionState = z.infer<typeof autoSuggestionStateSchema>;
 export type SpeechState = z.infer<typeof speechStateSchema>;

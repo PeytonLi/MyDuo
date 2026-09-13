@@ -97,6 +97,19 @@ textarea { line-height: 1.55; resize: vertical; }
 .setup-intro h1 { font-size: clamp(3.3rem, 6vw, 6.6rem); line-height: 0.92; margin-bottom: 0; max-width: 1000px; }
 .setup-intro > p { color: var(--ink-soft); font-family: var(--serif); font-size: 1.22rem; line-height: 1.5; margin-bottom: 10px; }
 .toast, .meeting-notice { background: var(--ink); color: var(--cream); font-size: 0.8rem; padding: 11px 15px; }
+.meeting-history { background: rgba(251, 248, 240, 0.8); border: 1px solid var(--line); margin-bottom: 20px; padding: clamp(22px, 3vw, 36px); }
+.history-heading { align-items: end; display: flex; justify-content: space-between; margin-bottom: 18px; }
+.history-heading h2 { font-size: 2rem; margin: 0; }
+.history-heading > span { color: var(--ink-soft); font-size: .72rem; }
+.history-list { display: grid; }
+.history-item { align-items: center; border-top: 1px solid var(--paper-deep); display: grid; gap: 18px; grid-template-columns: minmax(220px, 1fr) auto auto; padding: 15px 0; }
+.history-item strong { font-family: var(--serif); font-size: 1.12rem; font-weight: 600; }
+.history-item p { color: var(--ink-soft); font-size: .72rem; margin: 4px 0 0; }
+.history-status { background: var(--paper-deep); border-radius: 99px; font-size: .64rem; font-weight: 800; letter-spacing: .06em; padding: 7px 10px; text-transform: uppercase; }
+.history-status-listening { background: var(--mint); }
+.history-status-uncertain, .history-status-waiting, .history-status-joining { background: #f3e1bf; }
+.history-actions { align-items: center; display: flex; gap: 12px; justify-content: flex-end; }
+.history-actions .button { min-height: 38px; padding: 9px 13px; text-decoration: none; }
 .setup-grid { display: grid; gap: 20px; grid-template-columns: 1fr 1fr; }
 .panel { background: rgba(251, 248, 240, 0.8); border: 1px solid var(--line); padding: clamp(24px, 3vw, 42px); }
 .panel-heading { align-items: flex-start; display: flex; gap: 20px; margin-bottom: 24px; }
@@ -168,10 +181,16 @@ textarea { line-height: 1.55; resize: vertical; }
 .prompt-basis { align-self: center; color: var(--ink-soft); font-size: .78rem; }
 .suggestion-card { border-left: 3px solid var(--signal); margin-top: 28px; padding-left: 24px; }
 .suggestion-meta { align-items: center; color: var(--ink-soft); display: flex; font-size: .65rem; font-weight: 800; justify-content: space-between; letter-spacing: .12em; text-transform: uppercase; }
+.response-target { background: var(--paper-soft); border-radius: 10px; margin: 14px 0 18px; padding: 12px 14px; }
+.response-target > p { color: var(--ink-soft); font-size: .68rem; font-weight: 800; letter-spacing: .08em; margin: 0 0 8px; text-transform: uppercase; }
+.response-target blockquote { border-left: 2px solid var(--signal); display: grid; gap: 3px; margin: 7px 0; padding-left: 10px; }
+.response-target blockquote strong { font-size: .72rem; }
+.response-target blockquote span { color: var(--ink-soft); font-size: .78rem; line-height: 1.45; }
 .draft-text { background: transparent; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; font-family: var(--serif); font-size: clamp(1.4rem, 2.2vw, 2rem); line-height: 1.36; padding: 6px 0 16px; }
 .draft-text:focus { box-shadow: none; }
 .character-count { color: var(--ink-soft); font-family: ui-monospace, monospace; font-size: .62rem; text-align: right; }
 .stale-warning { background: #f3e1bf; border-left: 3px solid #c77b1d; font-size: .77rem; line-height: 1.45; margin: 15px 0; padding: 10px; }
+.stale-warning p { margin: 0 0 7px; }
 .evidence-block { margin: 19px 0 23px; }
 .evidence-label { font-size: .72rem; font-weight: 800; margin-bottom: 10px; }
 .evidence-block details { border-top: 1px solid var(--paper-deep); font-size: .76rem; padding: 10px 0; }
@@ -200,6 +219,8 @@ textarea { line-height: 1.55; resize: vertical; }
   .login-card { margin: 0; }
   .setup-intro { align-items: start; grid-template-columns: 1fr; }
   .setup-grid { grid-template-columns: 1fr; }
+  .history-item { align-items: start; grid-template-columns: 1fr auto; }
+  .history-actions { grid-column: 1 / -1; justify-content: flex-start; }
   .launch-panel { grid-column: auto; }
   .meeting-shell { height: auto; min-height: 100vh; overflow: visible; }
   .meeting-topbar { grid-template-columns: auto 1fr auto; }

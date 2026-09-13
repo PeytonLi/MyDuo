@@ -18,9 +18,10 @@ const acknowledgementSchema = z.object({
 
 const ACTIVE_SPEECH = ["queued", "claimed", "preparing", "playing"];
 const TRANSITIONS: Record<string, string[]> = {
-  preparing: ["playing", "failed", "uncertain"],
+  preparing: ["playing", "completed", "failed", "uncertain"],
   playing: ["completed", "failed", "uncertain"],
 };
+const SETTLED_SPEECH = ["completed", "cancelled", "failed", "uncertain", "expired"];
 
 export const VOICE_PREVIEW_TEXT = "Hi, I’m your MyDuo. I’ll speak only when you approve it.";
 
@@ -146,7 +147,9 @@ export async function queueSpeech(ownerId: string, sessionId: string, input: App
          status: 'queued', createdAt: $now, updatedAt: $now, expiresAt: $expiresAt
        })
        CREATE (s)-[:HAS_SPEECH]->(c)
-       SET s.activeSpeechId = $id, s.updatedAt = $now, g.status = 'approved', g.updatedAt = $now
+       SET s.activeSpeechId = $id, s.updatedAt = $now,
+           g.status = 'approved', g.approvedText = $approvedText,
+           g.approvedAt = $now, g.updatedAt = $now
        RETURN c`,
       { id, sessionId, ownerId, voiceId, ...input, now, expiresAt },
     );
@@ -178,11 +181,12 @@ export async function heartbeatAndClaim(mediaTokenHash: string, sessionId: strin
       `MATCH (a:AccessSession {tokenHash: $mediaTokenHash, scopedSessionId: $sessionId, kind: 'media'}),
              (s:Session {id: $sessionId})
        WHERE a.expiresAt > datetime()
-       OPTIONAL MATCH (expired:SpeechCommand {sessionId: s.id, status: 'queued'})
-       WHERE datetime(expired.expiresAt) <= datetime()
+       OPTIONAL MATCH (expired:SpeechCommand {sessionId: s.id})
+       WHERE expired.status IN $activeSpeech
+         AND datetime(expired.expiresAt) <= datetime()
        SET expired.status = 'expired', expired.updatedAt = $now,
            s.activeSpeechId = CASE WHEN s.activeSpeechId = expired.id THEN null ELSE s.activeSpeechId END`,
-      { mediaTokenHash, sessionId, now },
+      { mediaTokenHash, sessionId, activeSpeech: ACTIVE_SPEECH, now },
     );
     const result = await tx.run(
       `MATCH (a:AccessSession {tokenHash: $mediaTokenHash, scopedSessionId: $sessionId, kind: 'media'}),
@@ -213,28 +217,38 @@ export async function acknowledgeCommand(
   input: z.infer<typeof acknowledgementSchema>,
 ) {
   return writeQuery(async (tx) => {
-    const found = await tx.run(
+    const allowedFrom = Object.entries(TRANSITIONS)
+      .filter(([, next]) => next.includes(input.status))
+      .map(([status]) => status);
+    const result = await tx.run(
       `MATCH (a:AccessSession {tokenHash: $mediaTokenHash, scopedSessionId: $sessionId, kind: 'media'}),
              (s:Session {id: $sessionId}), (c:SpeechCommand {id: $commandId, sessionId: $sessionId})
        WHERE a.expiresAt > datetime()
-       RETURN s, c`,
-      { mediaTokenHash, sessionId, commandId: input.commandId },
+       WITH s, c, c.status AS previousStatus
+       FOREACH (_ IN CASE WHEN previousStatus IN $allowedFrom THEN [1] ELSE [] END |
+         SET c.status = $status, c.errorCode = $errorCode, c.updatedAt = $now,
+             s.activeSpeechId = CASE WHEN $terminal THEN null ELSE s.activeSpeechId END,
+             s.updatedAt = $now
+       )
+       RETURN c, previousStatus`,
+      {
+        mediaTokenHash,
+        sessionId,
+        commandId: input.commandId,
+        allowedFrom,
+        status: input.status,
+        errorCode: input.errorCode || null,
+        terminal: ["completed", "failed", "uncertain"].includes(input.status),
+        now: new Date().toISOString(),
+      },
     );
-    if (!found.records.length) throw new MeetingError("Speech command not found", "COMMAND_NOT_FOUND", 404);
-    const current = found.records[0].get("c").properties.status as string;
-    if (!TRANSITIONS[current]?.includes(input.status)) {
+    const record = result.records[0];
+    if (!record) throw new MeetingError("Speech command not found", "COMMAND_NOT_FOUND", 404);
+    const previous = String(record.get("previousStatus"));
+    if (!allowedFrom.includes(previous) && previous !== input.status && !SETTLED_SPEECH.includes(previous)) {
       throw new MeetingError("Invalid speech state transition", "INVALID_SPEECH_STATE", 409);
     }
-    const terminal = ["completed", "failed", "uncertain"].includes(input.status);
-    const updated = await tx.run(
-      `MATCH (s:Session {id: $sessionId}), (c:SpeechCommand {id: $commandId, sessionId: $sessionId})
-       SET c.status = $status, c.errorCode = $errorCode, c.updatedAt = $now,
-           s.activeSpeechId = CASE WHEN $terminal THEN null ELSE s.activeSpeechId END,
-           s.updatedAt = $now
-       RETURN c`,
-      { sessionId, commandId: input.commandId, status: input.status, errorCode: input.errorCode || null, terminal, now: new Date().toISOString() },
-    );
-    return mapSpeech(updated.records[0].get("c").properties);
+    return mapSpeech(record.get("c").properties);
   });
 }
 
@@ -258,6 +272,21 @@ export async function prepareApprovedAudio(mediaTokenHash: string, sessionId: st
   });
 }
 
+export async function assertApprovedAudioActive(mediaTokenHash: string, sessionId: string, commandId: string) {
+  const active = await readQuery(async (tx) => {
+    const result = await tx.run(
+      `MATCH (a:AccessSession {tokenHash: $mediaTokenHash, scopedSessionId: $sessionId, kind: 'media'}),
+             (s:Session {id: $sessionId, activeSpeechId: $commandId}),
+             (c:SpeechCommand {id: $commandId, sessionId: $sessionId, status: 'preparing'})
+       WHERE a.expiresAt > datetime() AND datetime(c.expiresAt) > datetime()
+       RETURN c.id AS id`,
+      { mediaTokenHash, sessionId, commandId },
+    );
+    return Boolean(result.records.length);
+  });
+  if (!active) throw new MeetingError("Speech command was cancelled", "COMMAND_CANCELLED", 409);
+}
+
 export async function synthesizeApprovedText(text: string, voiceId: string) {
   if (!allowedVoice(voiceId)) throw new MeetingError("Voice is not available", "VOICE_NOT_ALLOWED", 400);
   const { apiKey, model } = elevenLabsConfig();
@@ -278,6 +307,7 @@ export async function failCommand(sessionId: string, commandId: string, errorCod
   await writeQuery(async (tx) => {
     await tx.run(
       `MATCH (s:Session {id: $sessionId}), (c:SpeechCommand {id: $commandId, sessionId: $sessionId})
+       WHERE c.status IN ['claimed', 'preparing', 'playing']
        SET c.status = 'failed', c.errorCode = $errorCode, c.updatedAt = $now,
            s.activeSpeechId = CASE WHEN s.activeSpeechId = c.id THEN null ELSE s.activeSpeechId END`,
       { sessionId, commandId, errorCode, now: new Date().toISOString() },

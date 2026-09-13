@@ -23,6 +23,15 @@ type MemorySource = {
 
 type Project = { id: string; name: string };
 type Memory = { projects: Project[]; sources: MemorySource[] };
+type MeetingSummary = {
+  id: string;
+  projectName: string;
+  meetingPlatform: "google_meet" | "zoom";
+  status: "joining" | "waiting" | "listening" | "ending" | "ended" | "failed" | "uncertain";
+  createdAt: string;
+  transcriptCount: number;
+  reviewState: "none" | "pending" | "complete";
+};
 
 const emptyProfile: Profile = { role: "", priorities: "", tone: "Clear and concise", responseExamples: "", selectedVoiceId: "" };
 
@@ -40,6 +49,7 @@ export function SetupClient() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState("");
   const [voices, setVoices] = useState<VoiceOption[]>([]);
+  const [meetings, setMeetings] = useState<MeetingSummary[]>([]);
   const [previewingVoiceId, setPreviewingVoiceId] = useState("");
   const [previewVoiceId, setPreviewVoiceId] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
@@ -47,13 +57,14 @@ export function SetupClient() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    Promise.all([api<Profile>("/api/profile"), api<Memory>("/api/memory"), api<VoiceOption[]>("/api/voices")])
-      .then(([savedProfile, memory, availableVoices]) => {
+    Promise.all([api<Profile>("/api/profile"), api<Memory>("/api/memory"), api<VoiceOption[]>("/api/voices"), api<MeetingSummary[]>("/api/sessions")])
+      .then(([savedProfile, memory, availableVoices, recentMeetings]) => {
         setProfile({ ...emptyProfile, ...savedProfile });
         setVoices(availableVoices);
         setSources(memory.sources ?? []);
         setProjects(memory.projects ?? []);
         setProjectId(memory.projects?.[0]?.id ?? "");
+        setMeetings(recentMeetings);
         setSignedIn(true);
       })
       .catch(() => setSignedIn(false));
@@ -207,6 +218,35 @@ export function SetupClient() {
       window.location.assign(new URL(`/meeting/${session.id}`, window.location.origin));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not start the meeting.");
+      api<MeetingSummary[]>("/api/sessions").then(setMeetings).catch(() => undefined);
+      setBusy(false);
+    }
+  }
+
+  async function resumeMeeting(meeting: MeetingSummary) {
+    setBusy(true);
+    setMessage("");
+    try {
+      const recovered = meeting.status === "uncertain"
+        ? await api<{ status: MeetingSummary["status"] }>(`/api/sessions/${meeting.id}/recover`, { method: "POST" })
+        : meeting;
+      window.location.assign(recovered.status === "ended" ? `/meeting/${meeting.id}/review` : `/meeting/${meeting.id}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not recover that meeting.");
+      setBusy(false);
+    }
+  }
+
+  async function endKnownMeeting(meeting: MeetingSummary) {
+    setBusy(true);
+    setMessage("");
+    try {
+      await api(`/api/sessions/${meeting.id}`, { method: "DELETE" });
+      setMeetings(await api<MeetingSummary[]>("/api/sessions"));
+      setMessage("Meeting ended. You can review its transcript below.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not end that meeting.");
+    } finally {
       setBusy(false);
     }
   }
@@ -258,6 +298,36 @@ export function SetupClient() {
       </section>
 
       {message && <div className="toast" role="status">{message}</div>}
+
+      {meetings.length > 0 && (
+        <section className="meeting-history" aria-labelledby="meeting-history-title">
+          <div className="history-heading">
+            <div><p className="section-kicker">Continue where you left off</p><h2 id="meeting-history-title">Recent meetings</h2></div>
+            <span>{meetings.length} saved</span>
+          </div>
+          <div className="history-list">
+            {meetings.map((meeting) => {
+              const active = ["joining", "waiting", "listening", "uncertain"].includes(meeting.status);
+              return (
+                <article className="history-item" key={meeting.id}>
+                  <div>
+                    <strong>{meeting.projectName}</strong>
+                    <p>{meeting.meetingPlatform === "zoom" ? "Zoom" : "Google Meet"} · {new Date(meeting.createdAt).toLocaleDateString([], { month: "short", day: "numeric" })} · {meeting.transcriptCount} transcript line{meeting.transcriptCount === 1 ? "" : "s"}</p>
+                  </div>
+                  <span className={`history-status history-status-${meeting.status}`}>{meeting.status === "uncertain" ? "Needs recovery" : meeting.status}</span>
+                  <div className="history-actions">
+                    {active && <button className="button button-ink" type="button" disabled={busy} onClick={() => resumeMeeting(meeting)}>{meeting.status === "uncertain" ? "Recover & resume" : "Resume"}</button>}
+                    {active && <button className="text-button danger" type="button" disabled={busy} onClick={() => endKnownMeeting(meeting)}>End</button>}
+                    {meeting.status === "ending" && <span>Leaving…</span>}
+                    {meeting.status === "ended" && meeting.reviewState === "pending" && <a className="button button-accent" href={`/meeting/${meeting.id}/review`}>Review memory</a>}
+                    {meeting.status === "ended" && meeting.reviewState === "complete" && <a className="text-button" href={`/meeting/${meeting.id}/review`}>View review</a>}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       <div className="setup-grid">
         <form className="panel profile-panel" onSubmit={saveProfile}>
