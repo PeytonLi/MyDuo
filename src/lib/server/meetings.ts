@@ -194,7 +194,9 @@ async function reserveSession(ownerId: string, meetingUrl: string, requestedProj
   const fallbackProjectId = randomUUID();
   const bootstrapToken = randomBytes(32).toString("base64url");
   const now = new Date().toISOString();
-  const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+  // The bot can wait minutes in the meeting waiting room before the host admits it and Recall
+  // loads the media page; too-short a window leaves the session permanently audio-dead.
+  const expiresAt = new Date(Date.now() + 2 * 60 * 60_000).toISOString();
 
   const projectId = await writeQuery(async (tx) => {
     const active = await tx.run(
